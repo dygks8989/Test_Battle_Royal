@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>라스트 파이브</title>
+  <link rel="stylesheet" href="css/base.css?v=2">
+  <link rel="stylesheet" href="css/screens.css?v=2">
+  <link rel="stylesheet" href="css/hud.css?v=2">
+</head>
+<body>
+
+<!-- ============ 로비: 공개 방 목록 ============ -->
+<section class="screen screen-lobby" data-screen="lobby">
+  <header class="topbar">
+    <div class="logo"><span class="logo-mark">5</span><div><strong>LAST FIVE</strong><small>라스트 파이브 (가제)</small></div></div>
+    <div class="topbar-right">
+      <label class="nick-field">
+        <span>닉네임</span>
+        <input id="nickname" type="text" maxlength="12" placeholder="닉네임 입력" autocomplete="off">
+      </label>
+      <button class="btn" data-go="custom">캐릭터 꾸미기</button>
+      <button class="icon-btn" data-open-settings aria-label="설정">⚙</button>
+    </div>
+  </header>
+
+  <main class="lobby-main">
+    <div class="lobby-hero">
+      <h1>최대 5명, 랜덤 능력, <em>마지막 1인</em></h1>
+      <p>섬 곳곳에 흩어져 시작해 티켓으로 능력을 뽑고 10분 안에 승부를 냅니다.</p>
+      <div class="hero-actions">
+        <button class="btn btn-primary btn-lg" id="quickJoin">빠른 입장</button>
+        <button class="btn btn-lg" id="createRoom">방 만들기</button>
+      </div>
+    </div>
+
+    <div class="panel room-list-panel">
+      <div class="panel-head">
+        <h2>공개 방 목록 <span class="muted" id="roomCount"></span></h2>
+        <div class="panel-tools">
+          <input id="roomSearch" type="search" placeholder="방 이름 검색">
+          <label class="check"><input type="checkbox" id="onlyWaiting"> 대기 중만</label>
+          <button class="btn btn-sm" id="refreshRooms">↻ 새로고침</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="room-table">
+          <thead><tr><th>방 이름</th><th>방장</th><th>인원</th><th>상태</th><th>핑</th><th></th></tr></thead>
+          <tbody id="roomRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 방 대기실 ============ -->
+<section class="screen screen-room" data-screen="room">
+  <header class="topbar">
+    <button class="btn btn-ghost" id="leaveRoom">← 방 나가기</button>
+    <div class="room-title"><strong id="roomName"></strong><span class="muted" id="roomMeta"></span></div>
+    <div class="topbar-right">
+      <button class="btn" data-go="custom">캐릭터 꾸미기</button>
+      <button class="icon-btn" data-open-settings aria-label="설정">⚙</button>
+    </div>
+  </header>
+  <main class="room-main">
+    <div class="room-left">
+      <ol class="slots" id="slots"></ol>
+      <div class="room-status" id="roomStatus"></div>
+      <div class="room-actions">
+        <button class="btn btn-primary btn-lg" id="readyBtn">준비</button>
+      </div>
+    </div>
+    <aside class="panel chat chat-room" id="roomChat">
+      <div class="panel-head"><h2>로비 채팅</h2></div>
+      <div class="chat-log"></div>
+      <form class="chat-form"><input type="text" maxlength="100" placeholder="Enter로 입력 (최대 100자)"><button class="btn btn-sm">전송</button></form>
+    </aside>
+  </main>
+</section>
+
+<!-- ============ 캐릭터 커스터마이징 ============ -->
+<section class="screen screen-custom" data-screen="custom">
+  <header class="topbar">
+    <button class="btn btn-ghost" id="customBack">← 돌아가기</button>
+    <div class="room-title"><strong>캐릭터 꾸미기</strong><span class="muted">외형은 판정에 영향이 없어요</span></div>
+    <div class="topbar-right"><button class="btn" id="customRandom">무작위</button><button class="btn btn-primary" id="customSave">저장</button></div>
+  </header>
+  <main class="custom-main">
+    <div class="preview-stage" id="previewStage">
+      <div class="preview-floor"></div>
+      <div class="preview-rot" id="previewRot"></div>
+      <p class="preview-hint">드래그해서 돌려 보기</p>
+    </div>
+    <div class="panel custom-panel">
+      <nav class="tabs" id="partTabs" role="tablist"></nav>
+      <div class="part-grid" id="partGrid"></div>
+      <h3 class="sub-label">색상</h3>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 인게임 HUD ============ -->
+<section class="screen screen-hud" data-screen="hud">
+  <div class="world" id="world">
+    <canvas id="gameCanvas"></canvas>
+    <div class="fx-layer" id="fxLayer"></div>
+  </div>
+  <div class="viewmodel" id="viewmodel"></div>
+
+  <div class="hud" id="hud">
+    <div class="crosshair" id="crosshair"><i></i><i></i><i></i><i></i></div>
+    <div class="hitmarker" id="hitmarker"></div>
+    <div class="dmg-dir" id="dmgDir"></div>
+    <div class="vignette" id="vignette"></div>
+
+    <!-- 상단 중앙: 자기장·생존자 -->
+    <div class="hud-top">
+      <div class="zone-pill" id="zonePill"><span id="zoneLabel">준비 단계</span><b id="zoneTimer">00:10</b></div>
+      <div class="counter"><small>생존</small><b id="aliveCount">5</b></div>
+      <div class="counter"><small>처치</small><b id="killCount">0</b></div>
+    </div>
+    <div class="banner" id="banner"></div>
+    <div class="zone-warn" id="zoneWarn">안전구역 밖 — 초당 <b id="zoneDps">1</b> 피해</div>
+
+    <!-- 좌상단: 킬 피드 -->
+    <div class="killfeed" id="killfeed"></div>
+
+    <!-- 우상단: 미니맵 -->
+    <div class="minimap" id="minimap"><svg viewBox="0 0 600 600" id="minimapSvg"></svg><span class="minimap-zone" id="myZoneName"></span></div>
+
+    <!-- 좌하단: 체력·장비 + 채팅 -->
+    <div class="hud-bl">
+      <div class="chat chat-hud" id="hudChat">
+        <div class="chat-log"></div>
+        <form class="chat-form"><input type="text" maxlength="100" placeholder="전체 채팅 (Enter)"></form>
+      </div>
+      <div class="vitals">
+        <div class="gear"><span class="gear-item" id="gearHelmet" title="헬멧">헬멧 <b>0</b></span><span class="gear-item" id="gearVest" title="방탄조끼">조끼 <b>0</b></span><span class="stance" id="stance">서기</span></div>
+        <div class="hpbar"><div class="hpbar-lag" id="hpLag"></div><div class="hpbar-fill" id="hpFill"></div><span id="hpText">100</span></div>
+      </div>
+    </div>
+
+    <!-- 하단 중앙: 능력 -->
+    <div class="ability-bar" id="abilityBar"></div>
+    <div class="cast" id="cast"><span id="castLabel"></span><div class="cast-bar"><i id="castFill"></i></div></div>
+    <div class="prompt" id="prompt"></div>
+    <div class="key-hint" id="keyHint"></div>
+    <div class="click-hint" id="clickHint" hidden>화면을 클릭하면 마우스 시점 조작을 다시 시작해요</div>
+
+    <!-- 우하단: 무기 -->
+    <div class="hud-br">
+      <div class="weapon-slots" id="weaponSlots"></div>
+      <div class="ammo"><b id="ammoMag">—</b><span>/</span><span id="ammoReserve">—</span><small id="fireMode"></small></div>
+    </div>
+
+    <!-- 능력 뽑기 룰렛 -->
+    <div class="roulette" id="roulette" hidden>
+      <div class="roulette-window"><div class="roulette-reel" id="reel"></div></div>
+      <p class="roulette-result" id="rouletteResult"></p>
+    </div>
+    <!-- 능력 교체 선택 창 -->
+    <div class="swap" id="swap" hidden></div>
+
+    <div class="demo" id="demo">
+      <button class="demo-toggle" id="demoToggle">데모 ▾</button>
+      <div class="demo-body">
+        <p>퍼블리싱 확인용 컨트롤</p>
+        <button class="btn btn-sm" data-demo="speed">자기장 ×10 속도</button>
+        <button class="btn btn-sm" data-demo="ticket">티켓 +1</button>
+        <button class="btn btn-sm" data-demo="hit">피격 받기</button>
+        <button class="btn btn-sm" data-demo="kill">처치하기</button>
+        <button class="btn btn-sm" data-demo="win">승리로 끝내기</button>
+        <button class="btn btn-sm" data-demo="die">사망하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 오버레이: 인벤토리 / 지도 / 메뉴 -->
+  <div class="overlay" id="invOverlay" hidden></div>
+  <div class="overlay" id="mapOverlay" hidden><div class="bigmap"><svg viewBox="0 0 600 600" id="bigmapSvg"></svg></div><p class="overlay-hint">M 키로 닫기 · 내 스폰 구역만 표시됩니다</p></div>
+  <div class="overlay" id="startOverlay" hidden>
+    <div class="start-box">
+      <h2>조작법</h2>
+      <div class="controls" data-controls></div>
+      <button class="btn btn-primary btn-lg" id="startPlay">클릭해서 시작 (마우스로 시점 조작)</button>
+      <p class="muted">게임 중 <kbd>Esc</kbd>를 누르면 마우스가 풀리고 메뉴가 열려요. 키는 설정에서 바꿀 수 있어요.</p>
+    </div>
+  </div>
+  <div class="overlay" id="menuOverlay" hidden>
+    <div class="menu-box">
+      <h2>메뉴</h2>
+      <p class="muted">온라인 게임이라 메뉴를 열어도 게임은 계속됩니다.</p>
+      <button class="btn btn-primary btn-lg" id="menuResume">계속하기</button>
+      <button class="btn btn-lg" data-open-settings>설정</button>
+      <button class="btn btn-lg btn-danger" id="menuQuit">매치 나가기</button>
+      <h3 class="menu-sub">조작법</h3>
+      <div class="controls compact" data-controls></div>
+    </div>
+  </div>
+  <div class="overlay death" id="deathOverlay" hidden></div>
+</section>
+
+<!-- ============ 결과 ============ -->
+<section class="screen screen-result" data-screen="result">
+  <main class="result-main" id="resultMain"></main>
+</section>
+
+<!-- ============ 설정 창 ============ -->
+<div class="settings" id="settings" hidden>
+  <div class="settings-box" role="dialog" aria-modal="true" aria-label="설정">
+    <header class="modal-head"><h2>설정</h2><button class="icon-btn" id="settingsClose" aria-label="닫기">✕</button></header>
+    <div class="settings-body">
+      <nav class="settings-nav" role="tablist">
+        <button class="is-active" data-stab="keys">조작 키</button>
+        <button data-stab="mouse">마우스</button>
+        <button data-stab="video">그래픽</button>
+        <button data-stab="audio">사운드</button>
+      </nav>
+      <div class="settings-pages">
+        <div class="spage is-active" data-spage="keys">
+          <p class="muted">키를 클릭한 뒤 원하는 키나 마우스 버튼을 누르세요. Esc를 누르면 취소됩니다.</p>
+          <div class="keylist" id="keylist"></div>
+        </div>
+        <div class="spage" data-spage="mouse">
+          <div class="field"><label for="sSens">일반 감도</label><input type="range" id="sSens" min="0.1" max="3" step="0.05"><output></output></div>
+          <div class="field"><label for="sSensAds">조준 감도</label><input type="range" id="sSensAds" min="0.1" max="3" step="0.05"><output></output></div>
+          <div class="field"><label for="sInvert">Y축 반전</label><input type="checkbox" id="sInvert" class="switch"></div>
+        </div>
+        <div class="spage" data-spage="video">
+          <div class="field"><label for="sFov">시야각 (FOV)</label><input type="range" id="sFov" min="80" max="103" step="1"><output></output></div>
+          <div class="field"><label>그래픽 품질</label>
+            <div class="seg" id="sQuality"><button data-v="low">낮음</button><button data-v="mid">보통</button><button data-v="high">높음</button></div>
+          </div>
+          <div class="field"><label for="sShake">화면 흔들림</label><input type="checkbox" id="sShake" class="switch"></div>
+        </div>
+        <div class="spage" data-spage="audio">
+          <div class="field"><label for="sVolMaster">전체 음량</label><input type="range" id="sVolMaster" min="0" max="100"><output></output></div>
+          <div class="field"><label for="sVolEffect">효과음</label><input type="range" id="sVolEffect" min="0" max="100"><output></output></div>
+          <div class="field"><label for="sVolMusic">배경음</label><input type="range" id="sVolMusic" min="0" max="100"><output></output></div>
+        </div>
+      </div>
+    </div>
+    <footer class="modal-foot">
+      <button class="btn" id="settingsReset">기본값으로 초기화</button>
+      <button class="btn btn-primary" id="settingsDone">완료</button>
+    </footer>
+  </div>
+</div>
+
+<div id="modals"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/data.js?v=2"></script>
+<script src="js/core.js?v=2"></script>
+<script src="js/character.js?v=2"></script>
+<script src="js/settings.js?v=2"></script>
+<script src="js/lobby.js?v=2"></script>
+<script src="js/room.js?v=2"></script>
+<script src="js/custom.js?v=2"></script>
+<script src="js/world3d.js?v=2"></script>
+<script src="js/hud.js?v=2"></script>
+<script src="js/result.js?v=2"></script>
+<script src="js/app.js?v=2"></script>
+</body>
+</html>
