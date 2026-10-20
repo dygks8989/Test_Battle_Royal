@@ -26,7 +26,8 @@
 .viewmodel.reloading svg { transform: translateY(30%) rotate(-12deg); transition: transform .3s; }
 .viewmodel.recoil svg { animation: recoil .09s ease-out; }
 .viewmodel .muzzle { fill: transparent; }
-.viewmodel.recoil .muzzle { fill: #ffd27a; filter: drop-shadow(0 0 12px #ffb340); r: 18; }
+.viewmodel.recoil .muzzle { animation: muzzle .09s steps(1) forwards; } /* 한 번 번쩍이고 꺼짐 (.recoil 클래스는 다음 발까지 남아 있음) */
+@keyframes muzzle { 0% { fill: #ffd27a; filter: drop-shadow(0 0 12px #ffb340); r: 18px; } 100% { fill: transparent; } }
 @keyframes bob { to { translate: 6px 8px; } }
 @keyframes recoil { 40% { translate: 8px 10px; rotate: 1deg; } }
 
@@ -276,3 +277,55 @@
 .key-hint.hide { opacity: 0; }
 .click-hint { position: absolute; left: 50%; top: 56%; transform: translateX(-50%); padding: 8px 16px; border-radius: 6px; background: rgba(10, 13, 16, .75); font-size: 13px; pointer-events: none; }
 @media (max-width: 900px) { .controls { grid-template-columns: 1fr 1fr; } .key-hint { bottom: 180px; } }
+
+/* ===== 사격·능력 효과 ===== */
+.dmg-num { position: absolute; transform: translate(-50%, -50%); font: 800 18px var(--mono); color: #fff; text-shadow: 0 0 3px #000, 0 2px 4px rgba(0,0,0,.6); animation: dmgUp .8s ease-out forwards; pointer-events: none; }
+.dmg-num.head { color: #ffd34d; font-size: 22px; }
+.dmg-num.lethal { color: #ff5a4a; font-size: 26px; }
+@keyframes dmgUp { 0% { opacity: 0; scale: 1.6; } 15% { opacity: 1; scale: 1; } 100% { opacity: 0; translate: 0 -46px; } }
+.fx-cast { box-shadow: inset 0 0 160px color-mix(in srgb, var(--g) 70%, transparent); animation: fadeOut .5s forwards; }
+.fx-jump { background: radial-gradient(transparent 50%, rgba(160, 240, 120, .35)); animation: fadeOut .4s forwards; }
+.fx-charge { background: radial-gradient(transparent 35%, rgba(255, 160, 60, .45)), repeating-conic-gradient(from 0deg at 50% 50%, transparent 0 4deg, rgba(255, 220, 170, .28) 4deg 5deg); -webkit-mask-image: radial-gradient(transparent 28%, #000 70%); mask-image: radial-gradient(transparent 28%, #000 70%); animation: fadeOut .55s forwards; }
+.fx-slam { background: radial-gradient(transparent 40%, rgba(255, 180, 70, .4)); animation: fadeOut .35s forwards; }
+.fx-zap { background: rgba(150, 220, 255, .25); animation: zap .3s steps(3) forwards; }
+@keyframes zap { 33% { opacity: .2; } 66% { opacity: 1; } 100% { opacity: 0; } }
+.fx-meteor { box-shadow: inset 0 0 200px rgba(255, 90, 40, .55); animation: fadeOut .6s forwards; }
+.fx-flashbang { background: #fff; animation: flashbang 3s ease-in forwards; }
+@keyframes flashbang { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
+.viewmodel.throwing svg { animation: throwArm .35s ease-out; }
+@keyframes throwArm { 30% { translate: -60px 40px; rotate: -10deg; } 60% { translate: 30px 120px; opacity: .3; } }
+
+/* ===== 스코프 화면 (4배율 이상) ===== */
+.scope-view { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 50%, transparent 0 min(38vh, 38vw), #050607 calc(min(38vh, 38vw) + 2px)); }
+.scope-view[hidden] { display: none; }
+.scope-view i { position: absolute; left: 50%; top: 50%; width: min(76vh, 76vw); height: min(76vh, 76vw); transform: translate(-50%, -50%); border-radius: 50%; box-shadow: inset 0 0 40px rgba(0,0,0,.65);
+  background: linear-gradient(#111, #111) center / 100% 1px no-repeat, linear-gradient(#111, #111) center / 1px 100% no-repeat, linear-gradient(#111, #111) center / 34% 3px no-repeat, linear-gradient(#111, #111) center / 3px 34% no-repeat; }
+.scope-view i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 6px #ff3b30; }
+.scope-view b { position: absolute; left: 50%; top: calc(50% + min(38vh, 38vw) + 10px); transform: translateX(-50%); font: 700 13px var(--mono); color: #c9d0d6; }
+.screen-hud.scoped .viewmodel, .screen-hud.scoped .crosshair { opacity: 0; }
+
+/* ===== 투척물 슬롯 ===== */
+.throw-slot { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; background: var(--hud-bg); min-width: 150px; position: relative; }
+.throw-slot.none { opacity: .45; }
+.throw-slot .ico { width: 22px; height: 22px; color: #b9d38f; }
+.throw-slot span { display: flex; flex-direction: column; line-height: 1.2; }
+.throw-slot b { font-size: 13px; }
+.throw-slot small { font-size: 10px; color: #9aa3ab; }
+.throw-slot kbd { margin-left: auto; }
+.throw-slot kbd.sub { margin-left: 0; opacity: .7; }
+.inv-ammo .sel { outline: 1.5px solid var(--accent); border-radius: 6px; }
+.inv h3 small { font-weight: 400; font-size: 11px; color: #9aa3ab; margin-left: 6px; }
+
+/* ===== 패시브: 이름 + 효과 표시 ===== */
+.passive-group { flex-direction: column; gap: 6px; padding-bottom: 9px; }
+.pchip { display: flex; align-items: center; gap: 8px; width: 172px; padding: 4px 10px 4px 4px; border-radius: 22px; background: rgba(10, 13, 16, .7); border: 1.5px solid var(--g, rgba(255,255,255,.2)); }
+.pchip .pico { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--g, #888) 22%, transparent); color: var(--g); font-weight: 800; font-size: 12px; }
+.pchip .pico .ico { width: 18px; height: 18px; }
+.pchip div { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.pchip b { font-size: 12px; }
+.pchip small { font-size: 11px; color: var(--g); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pchip.empty { border-style: dashed; border-color: rgba(255,255,255,.22); color: rgba(255,255,255,.45); }
+.pchip.empty small { color: rgba(255,255,255,.35); }
+.pchip.proc { animation: proc .9s ease-out; }
+@keyframes proc { 0% { box-shadow: 0 0 0 0 var(--g); background: color-mix(in srgb, var(--g) 45%, rgba(10,13,16,.7)); } 100% { box-shadow: 0 0 0 10px transparent; } }
+@media (max-width: 900px) { .pchip { width: 46px; padding: 4px; } .pchip div { display: none; } }

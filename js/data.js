@@ -14,7 +14,25 @@ LF.data = {
     sg12:   { name: 'SG-12 펌프',  family: '산탄총',       ammo: 'shell',  dmg: 99, rpm: 70,  mode: 'pump',  mag: 5,  reload: 2.5, range: 12 },
     dm14:   { name: 'DM-14',       family: '지정사수소총', ammo: 'rifle',  dmg: 48, rpm: 180, mode: 'semi',  mag: 10, reload: 2.8, range: 200 },
     br300:  { name: 'BR-300',      family: '저격총',       ammo: 'sniper', dmg: 90, rpm: 45,  mode: 'bolt',  mag: 5,  reload: 3.5, range: 600 },
+    sv98:   { name: 'SV-98',       family: '저격총',       ammo: 'sniper', dmg: 78, rpm: 55,  mode: 'bolt',  mag: 5,  reload: 3.2, range: 500 },
+    amr50:  { name: 'AMR-50 대물', family: '저격총',       ammo: 'sniper', dmg: 125, rpm: 30, mode: 'bolt',  mag: 4,  reload: 4.2, range: 600 },
+    lm60:   { name: 'LM-60',       family: '경기관총',     ammo: 'rifle',  dmg: 25, rpm: 750, mode: 'auto',  mag: 60, reload: 5.0, range: 70 },
     machete:{ name: '정글도',      family: '근접',         ammo: null,     dmg: 50, rpm: 60,  mode: 'melee', mag: 0,  reload: 0,   range: 2 }
+  },
+
+  /* WEAPON.md 7장 투척물 — 무기 슬롯과 별개로 종류별로 들고 다님 */
+  throwables: {
+    frag:  { name: '수류탄', color: '#4f6b3a', fuse: 2.5, radius: 7,  dmg: 100, max: 3 },
+    smoke: { name: '연막탄', color: '#9aa3a8', fuse: 1.5, radius: 6,  dur: 14,  max: 3 },
+    flash: { name: '섬광탄', color: '#d8d2b8', fuse: 1.5, radius: 15, blind: 3.5, max: 3 }
+  },
+  throwSpeed: 15, // m/s
+
+  /* WEAPON.md 8장 스코프 — 배율, 붙일 수 있는 계열. 조준 시 퍼짐 −40%, 4배율 이상은 스코프 화면 */
+  scopes: {
+    2: { name: '2배율 스코프', fam: ['기관단총', '돌격소총', '경기관총', '지정사수소총', '저격총'] },
+    4: { name: '4배율 스코프', fam: ['돌격소총', '경기관총', '지정사수소총', '저격총'] },
+    8: { name: '8배율 스코프', fam: ['지정사수소총', '저격총'] }
   },
 
   /* WEAPON.md 4장 */
@@ -37,12 +55,18 @@ LF.data = {
     turret:      { name: '터렛 설치',   type: 'active',  grade: 'rare',      p: 0, cd: 45, dur: 20, desc: '자동 터렛 설치. 데미지 7, 400RPM, 사거리 25m, 20초.' },
     xray:        { name: '투시',        type: 'active',  grade: 'rare',      p: 0, cd: 35, dur: 4,  desc: '반경 50m 벽 너머 적 실루엣 4초 표시.' },
     rewind:      { name: '시간 되감기', type: 'active',  grade: 'legendary', p: 0, cd: 60, desc: '3초 전 위치·체력·탄창으로 되돌아감.' },
-    swift:       { name: '질주',        type: 'passive', grade: 'common',    p: 0, desc: '이동 속도 +10%.' },
-    quick_hands: { name: '재빠른 손',   type: 'passive', grade: 'common',    p: 0, desc: '재장전·무기 교체 시간 −25%.' },
-    regen:       { name: '재생',        type: 'passive', grade: 'common',    p: 0, desc: '6초간 피격 없으면 초당 3 회복 (체력 70까지).' },
-    iron_skin:   { name: '강철 피부',   type: 'passive', grade: 'rare',      p: 0, desc: '몸통·팔다리 피해 −10% (머리 제외).' },
-    vampire:     { name: '흡혈',        type: 'passive', grade: 'rare',      p: 0, desc: '가한 최종 데미지의 15% 회복.' },
-    hunter:      { name: '사냥꾼',      type: 'passive', grade: 'legendary', p: 0, desc: '처치 시 액티브 쿨타임 초기화 + 체력 25 회복.' },
+    charge:      { name: '돌진',        type: 'active',  grade: 'common',    p: 0, cd: 12, desc: '바라보는 방향으로 12m 돌진. 부딪힌 적에게 40 피해 + 밀쳐냄.' },
+    ground_slam: { name: '지면 강타',   type: 'active',  grade: 'rare',      p: 0, cd: 22, desc: '뛰어올랐다 내리찍어 반경 6m에 최대 50 피해. 공중에서 쓰면 바로 내리꽂음.' },
+    chain_lightning: { name: '연쇄 번개', type: 'active', grade: 'rare',     p: 0, cd: 20, desc: '조준선 근처 적(40m)에게 번개 35 피해, 주변 12m 적 2명에게 튀며 20 피해.' },
+    meteor:      { name: '유성 낙하',   type: 'active',  grade: 'legendary', p: 0, cd: 50, desc: '조준 지점(최대 45m)에 1.2초 뒤 유성 낙하. 반경 8m에 최대 90 피해.' },
+    swift:       { name: '질주',        type: 'passive', grade: 'common',    p: 0, short: '이동 속도 +10%',        desc: '이동 속도 +10%.' },
+    quick_hands: { name: '재빠른 손',   type: 'passive', grade: 'common',    p: 0, short: '재장전·교체 −25%',      desc: '재장전·무기 교체 시간 −25%.' },
+    regen:       { name: '재생',        type: 'passive', grade: 'common',    p: 0, short: '6초 무피격 시 회복',    desc: '6초간 피격 없으면 초당 3 회복 (체력 70까지).' },
+    eagle_eye:   { name: '매의 눈',     type: 'passive', grade: 'common',    p: 0, short: '조준 퍼짐 −35%',        desc: '조준 중 탄 퍼짐 −35%, 조준 중 이동 속도 감소 없음.' },
+    iron_skin:   { name: '강철 피부',   type: 'passive', grade: 'rare',      p: 0, short: '받는 피해 −10%',        desc: '몸통·팔다리 피해 −10% (머리 제외).' },
+    vampire:     { name: '흡혈',        type: 'passive', grade: 'rare',      p: 0, short: '준 피해 15% 회복',      desc: '가한 최종 데미지의 15% 회복.' },
+    demolition:  { name: '폭파 전문가', type: 'passive', grade: 'rare',      p: 0, short: '폭발 +25% · 투척 +1',   desc: '폭발 피해 +25%, 투척물 종류별 최대 소지 +1, 투척 거리 +30%.' },
+    hunter:      { name: '사냥꾼',      type: 'passive', grade: 'legendary', p: 0, short: '처치 시 쿨 초기화',     desc: '처치 시 액티브 쿨타임 초기화 + 체력 25 회복.' },
     /* P1 — 뽑기에서 제외 */
     grapple:     { name: '갈고리',      type: 'active',  grade: 'common',    p: 1, cd: 14 },
     heal_field:  { name: '치유 장판',   type: 'active',  grade: 'common',    p: 1, cd: 40, dur: 6 },
@@ -72,6 +96,16 @@ LF.data = {
     iron_skin:   '<path d="M12 2l9 3.5v6c0 5.3-3.8 9.6-9 10.5-5.2-.9-9-5.2-9-10.5v-6z"/>',
     vampire:     '<path d="M12 2s7 8 7 13a7 7 0 01-14 0c0-5 7-13 7-13z"/>',
     hunter:      '<circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M11 1h2v6h-2zm0 16h2v6h-2zM1 11h6v2H1zm16 0h6v2h-6z"/><circle cx="12" cy="12" r="2"/>',
+    charge:      '<path d="M2 9h7v6H2zM10 6l12 6-12 6z"/><path d="M2 5h5M2 19h5" stroke="currentColor" stroke-width="2"/>',
+    ground_slam: '<path d="M12 1l3 7h-2v5h-2V8H9z"/><path d="M2 21l4-5 3 3 3-4 3 4 3-3 4 5z"/>',
+    chain_lightning: '<path d="M8 1 3 11h5l-2 7 7-10H8l3-7z"/><path d="M17 9l-3 6h3l-1 6 5-8h-3l2-4z" opacity=".7"/>',
+    meteor:      '<circle cx="15" cy="15" r="6"/><path d="M2 2l9 9M6 1l7 7M1 6l7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    eagle_eye:   '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.6"/>',
+    demolition:  '<circle cx="11" cy="14" r="7.5"/><path d="M14 6l3-3m0 0 2 1m-2-1 1-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>',
+    frag:        '<ellipse cx="12" cy="14" rx="7" ry="8"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M15 4h5v3" stroke="currentColor" stroke-width="2" fill="none"/>',
+    smoke:       '<rect x="7" y="9" width="10" height="13" rx="2"/><rect x="9" y="6" width="6" height="3"/><circle cx="7" cy="5" r="3" opacity=".6"/><circle cx="13" cy="3" r="2.4" opacity=".5"/><circle cx="18" cy="5" r="2.6" opacity=".4"/>',
+    flash:       '<rect x="8" y="8" width="8" height="14" rx="2"/><rect x="10" y="5" width="4" height="3"/><path d="M12 0v3M5 3l2 2M19 3l-2 2" stroke="currentColor" stroke-width="2"/>',
+    scope:       '<rect x="2" y="9" width="20" height="6" rx="3"/><circle cx="4" cy="12" r="3.5"/><circle cx="20" cy="12" r="3.5"/><rect x="9" y="5" width="4" height="4"/>',
     ticket:      '<path d="M3 6h18v4a2 2 0 000 4v4H3v-4a2 2 0 000-4z"/><path d="M12 8.5l1 2.2 2.4.3-1.8 1.6.5 2.4-2.1-1.2-2.1 1.2.5-2.4L8.6 11l2.4-.3z" fill="#000" opacity=".45"/>'
   },
 
@@ -91,6 +125,8 @@ LF.data = {
     { id: 'ability_1',       label: '액티브 능력 1',        key: 'KeyQ' },
     { id: 'ability_2',       label: '액티브 능력 2',        key: 'KeyE' },
     { id: 'use_ticket',      label: '랜덤 능력 티켓 사용',  key: 'KeyT' },
+    { id: 'throw',           label: '투척',                 key: 'KeyG' },
+    { id: 'cycle_throw',     label: '투척물 바꾸기',        key: 'Digit4' },
     { id: 'discard_ability', label: '새 능력 버리기',       key: 'KeyX' },
     { id: 'weapon_1',        label: '무기 1',               key: 'Digit1' },
     { id: 'weapon_2',        label: '무기 2',               key: 'Digit2' },

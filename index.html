@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>라스트 파이브</title>
-  <link rel="stylesheet" href="css/base.css?v=2">
-  <link rel="stylesheet" href="css/screens.css?v=2">
-  <link rel="stylesheet" href="css/hud.css?v=2">
+  <link rel="stylesheet" href="css/base.css?v=5">
+  <link rel="stylesheet" href="css/screens.css?v=5">
+  <link rel="stylesheet" href="css/hud.css?v=5">
 </head>
 <body>
 
@@ -110,6 +110,7 @@
   <div class="viewmodel" id="viewmodel"></div>
 
   <div class="hud" id="hud">
+    <div class="scope-view" id="scopeView" hidden><i></i><b id="scopeMag">4×</b></div>
     <div class="crosshair" id="crosshair"><i></i><i></i><i></i><i></i></div>
     <div class="hitmarker" id="hitmarker"></div>
     <div class="dmg-dir" id="dmgDir"></div>
@@ -151,6 +152,7 @@
 
     <!-- 우하단: 무기 -->
     <div class="hud-br">
+      <div class="throw-slot" id="throwSlot"></div>
       <div class="weapon-slots" id="weaponSlots"></div>
       <div class="ammo"><b id="ammoMag">—</b><span>/</span><span id="ammoReserve">—</span><small id="fireMode"></small></div>
     </div>
@@ -169,6 +171,8 @@
         <p>퍼블리싱 확인용 컨트롤</p>
         <button class="btn btn-sm" data-demo="speed">자기장 ×10 속도</button>
         <button class="btn btn-sm" data-demo="ticket">티켓 +1</button>
+        <button class="btn btn-sm" data-demo="kit">장비 받기 (저격총·투척물·스코프)</button>
+        <button class="btn btn-sm" data-demo="abil">새 능력 받기 (누를 때마다 바뀜)</button>
         <button class="btn btn-sm" data-demo="hit">피격 받기</button>
         <button class="btn btn-sm" data-demo="kill">처치하기</button>
         <button class="btn btn-sm" data-demo="win">승리로 끝내기</button>
@@ -253,16 +257,16 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="js/data.js?v=2"></script>
-<script src="js/core.js?v=2"></script>
-<script src="js/character.js?v=2"></script>
-<script src="js/settings.js?v=2"></script>
-<script src="js/lobby.js?v=2"></script>
-<script src="js/room.js?v=2"></script>
-<script src="js/custom.js?v=2"></script>
-<script src="js/world3d.js?v=2"></script>
-<script src="js/hud.js?v=2"></script>
-<script src="js/result.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
+<script src="js/data.js?v=5"></script>
+<script src="js/core.js?v=5"></script>
+<script src="js/character.js?v=5"></script>
+<script src="js/settings.js?v=5"></script>
+<script src="js/lobby.js?v=5"></script>
+<script src="js/room.js?v=5"></script>
+<script src="js/custom.js?v=5"></script>
+<script src="js/world3d.js?v=5"></script>
+<script src="js/hud.js?v=5"></script>
+<script src="js/result.js?v=5"></script>
+<script src="js/app.js?v=5"></script>
 </body>
 </html>

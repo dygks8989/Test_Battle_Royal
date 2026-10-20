@@ -8,7 +8,8 @@
   const now = () => performance.now() / 1000;
   const P0 = Object.keys(AB).filter(id => AB[id].p === 0);
   const PREP = 10, TICKET_CAST = 1.0, SWAP_TIME = 8, MEDKIT_CAST = 3, MAX_TICKETS = 3;
-  const SPREAD = { 맨손: 0, 권총: 1.0, 기관단총: 1.2, 돌격소총: 0.8, 산탄총: 0, 지정사수소총: 0.25, 저격총: 0.1, 근접: 0 }; // 기본 퍼짐(도)
+  const SPREAD = { 맨손: 0, 권총: 1.0, 기관단총: 1.2, 돌격소총: 0.8, 경기관총: 1.1, 산탄총: 0, 지정사수소총: 0.25, 저격총: 0.1, 근접: 0 }; // 기본 퍼짐(도)
+  const TH = D.throwables, THROW_KINDS = Object.keys(TH), THROW_CD = 0.9;
   const canvas = $('#gameCanvas');
 
   let G = null, raf = 0, last = 0, suppressMenu = false;
@@ -49,14 +50,14 @@
     ['이동', ['move_forward', 'move_left', 'move_back', 'move_right']], ['시점', null, '마우스'], ['달리기', ['sprint']],
     ['앉기', ['crouch']], ['점프', ['jump']], ['사격', ['fire']], ['조준', ['aim']], ['재장전', ['reload']],
     ['줍기', ['interact']], ['능력 1 / 2', ['ability_1', 'ability_2']], ['랜덤 능력 티켓', ['use_ticket']], ['새 능력 버리기', ['discard_ability']],
-    ['무기 선택', ['weapon_1', 'weapon_2', 'weapon_3']], ['인벤토리', ['inventory']], ['지도', ['map']],
+    ['무기 선택', ['weapon_1', 'weapon_2', 'weapon_3']], ['투척 / 바꾸기', ['throw', 'cycle_throw']], ['인벤토리', ['inventory']], ['지도', ['map']],
     ['자유 둘러보기', ['freelook']], ['채팅', ['chat']], ['메뉴 · 마우스 풀기', null, 'Esc']
   ];
   function renderControls() {
     const html = CONTROLS.map(([label, acts, fixed]) => `<div><span>${label}</span><b>${acts ? acts.map(a => `<kbd>${esc(K(a))}</kbd>`).join('') : `<kbd>${fixed}</kbd>`}</b></div>`).join('');
     document.querySelectorAll('[data-controls]').forEach(el => { el.innerHTML = html; });
     $('#keyHint').innerHTML = [['이동', K('move_forward') + K('move_left') + K('move_back') + K('move_right')], ['달리기', K('sprint')], ['점프', K('jump')], ['줍기', K('interact')],
-      ['티켓', K('use_ticket')], ['능력', K('ability_1') + '/' + K('ability_2')], ['안내 숨기기', 'F1']].map(([l, k]) => `<span><kbd>${esc(k)}</kbd>${l}</span>`).join('');
+      ['티켓', K('use_ticket')], ['능력', K('ability_1') + '/' + K('ability_2')], ['투척', K('throw')], ['안내 숨기기', 'F1']].map(([l, k]) => `<span><kbd>${esc(k)}</kbd>${l}</span>`).join('');
   }
 
   /* ================= 마우스 고정 (Pointer Lock) ================= */
@@ -81,7 +82,7 @@
     if (!G.everLocked) {
       G.noLock = true;
       $('#startOverlay').hidden = true;
-      toast('이 환경에서는 마우스 고정이 안 돼요. 왼쪽 버튼을 누른 채 끌어서 시점을 돌리세요.', 'warn');
+      toast('이 환경에서는 마우스 고정이 안 돼요. 누른 채 끌면 시점, 짧게 클릭하면 사격이에요.', 'warn');
     } else $('#clickHint').hidden = false;
   });
 
@@ -93,7 +94,8 @@
     const labels = big ? `<text x="300" y="282" class="map-label">활주로</text><text x="360" y="212" class="map-label">격납고</text>
       <text x="455" y="470" class="map-label sm">마을</text><text x="232" y="492" class="map-label sm">마을</text><text x="506" y="86" class="map-label sm">등대</text><text x="526" y="314" class="map-label sm">항구</text>` : '';
     svg.innerHTML = `
-      <defs><mask id="${maskId}"><rect x="-200" y="-200" width="1000" height="1000" fill="#fff"/><circle data-r="hole" fill="#000"/></mask></defs>
+      <defs><mask id="${maskId}"><rect x="-200" y="-200" width="1000" height="1000" fill="#fff"/><circle data-r="hole" fill="#000"/></mask>
+        <pattern id="${maskId}-hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" fill="rgba(150,40,200,.42)"/><rect width="5" height="14" fill="rgba(255,90,200,.30)"/></pattern></defs>
       <rect x="-200" y="-200" width="1000" height="1000" fill="#173a4f"/>
       <path d="${WD.islandPath()}" fill="#5f7a45" stroke="#cdbb8a" stroke-width="7"/>
       <g fill="#46623a">${D.forests.map(f => `<circle cx="${f.x}" cy="${f.y}" r="${f.r}"/>`).join('')}</g>
@@ -104,17 +106,31 @@
       ${grid}${labels}
       <circle cx="${z.x}" cy="${z.y}" r="26" fill="rgba(242,169,59,.14)" stroke="#f2a93b" stroke-width="2" stroke-dasharray="6 5"/>
       ${big ? `<text x="${z.x}" y="${z.y - 32}" class="map-label zone">내 스폰: ${esc(z.name)}</text>` : ''}
-      <rect x="-200" y="-200" width="1000" height="1000" fill="rgba(70,90,230,.30)" mask="url(#${maskId})"/>
-      <circle data-r="zone" fill="none" stroke="#5fb0ff" stroke-width="${big ? 3 : 2.5}"/>
-      <circle data-r="next" fill="none" stroke="#fff" stroke-width="${big ? 2 : 1.5}" stroke-dasharray="${big ? '10 8' : '5 4'}"/>
+      <!-- 자기장 바깥: 보라 빗금, 경계: 보라 굵은 선 + 번짐, 다음 안전구역: 흰 점선 -->
+      <rect x="-200" y="-200" width="1000" height="1000" fill="url(#${maskId}-hatch)" mask="url(#${maskId})"/>
+      <circle data-r="glow" fill="none" stroke="rgba(214,107,255,.35)" stroke-width="${big ? 12 : 14}"/>
+      <circle data-r="zone" fill="none" stroke="#d66bff" stroke-width="${big ? 4 : 5}"/>
+      <circle data-r="next" fill="rgba(255,255,255,.07)" stroke="#fff" stroke-width="${big ? 2.5 : 3}" stroke-dasharray="${big ? '10 8' : '9 6'}"/>
+      <line data-r="path" stroke="#fff" stroke-width="${big ? 2 : 3}" stroke-dasharray="${big ? '4 6' : '6 6'}" opacity=".85"/>
       <g data-r="me"><polygon points="0,-16 10,11 0,5 -10,11" fill="#ffd34d" stroke="#111" stroke-width="2.5"/></g>`;
-    return { svg, hole: svg.querySelector('[data-r=hole]'), zone: svg.querySelector('[data-r=zone]'), next: svg.querySelector('[data-r=next]'), me: svg.querySelector('[data-r=me]') };
+    const r = k => svg.querySelector(`[data-r=${k}]`);
+    return { svg, hole: r('hole'), zone: r('zone'), glow: r('glow'), next: r('next'), path: r('path'), me: r('me') };
   }
   function setCircle(el, c) { el.setAttribute('cx', c.x); el.setAttribute('cy', c.y); el.setAttribute('r', Math.max(0, c.r)); }
   function updateMap(refs, scale, follow) {
     const z = G.zone;
-    setCircle(refs.hole, z.cur); setCircle(refs.zone, z.cur);
-    if (z.next && z.state !== 'closed') { refs.next.style.display = ''; setCircle(refs.next, z.next); } else refs.next.style.display = 'none';
+    setCircle(refs.hole, z.cur); setCircle(refs.zone, z.cur); setCircle(refs.glow, z.cur);
+    refs.zone.setAttribute('stroke', z.state === 'shrink' && Math.floor(now() * 3) % 2 ? '#ff5ad1' : '#d66bff'); // 줄어드는 중엔 깜빡임
+    const showNext = z.next && z.state !== 'closed' && z.state !== 'prep';
+    if (showNext) { refs.next.style.display = ''; setCircle(refs.next, z.next); } else refs.next.style.display = 'none';
+    // 다음 안전구역 밖이면 가장 가까운 경계까지 길 안내 선
+    const tgt = showNext ? z.next : z.cur, d = Math.hypot(G.pos.x - tgt.x, G.pos.y - tgt.y);
+    if (z.state !== 'prep' && d > tgt.r && d > 0) {
+      const k = tgt.r / d;
+      refs.path.style.display = '';
+      refs.path.setAttribute('x1', G.pos.x); refs.path.setAttribute('y1', G.pos.y);
+      refs.path.setAttribute('x2', tgt.x + (G.pos.x - tgt.x) * k); refs.path.setAttribute('y2', tgt.y + (G.pos.y - tgt.y) * k);
+    } else refs.path.style.display = 'none';
     refs.me.setAttribute('transform', `translate(${G.pos.x} ${G.pos.y}) rotate(${G.facing * 180 / Math.PI + 90}) scale(${scale})`);
     if (follow) refs.svg.setAttribute('viewBox', `${G.pos.x - follow / 2} ${G.pos.y - follow / 2} ${follow} ${follow}`);
   }
@@ -162,18 +178,22 @@
   }
 
   /* ================= 아이템 배치 (WEAPON 9장 스폰 확률) ================= */
-  const GRADE_POOL = { common: ['p9', 'vx9', 'sg12', 'machete'], normal: ['r45', 'mk45', 'ar556', 'ak762'], rare: ['dm14', 'br300'] };
+  const GRADE_POOL = { common: ['p9', 'vx9', 'sg12', 'machete'], normal: ['r45', 'mk45', 'ar556', 'ak762'], rare: ['dm14', 'br300', 'sv98', 'lm60'], legend: ['amr50'] };
   function rollWeapon(central) {
     const r = Math.random();
-    if (r < 0.08 && central) return pick(GRADE_POOL.rare); // 희귀 무기는 중앙 위험 지역에만
+    if (central && r < 0.03) return pick(GRADE_POOL.legend); // 대물 저격총은 중앙에만, 아주 드물게
+    if (central && r < 0.15) return pick(GRADE_POOL.rare);   // 희귀 무기는 중앙 위험 지역에 많이
+    if (!central && r < 0.05) return pick(['sv98', 'dm14']);
     return pick(r < 0.6 ? GRADE_POOL.common : GRADE_POOL.normal);
   }
   function rollLoot(central) {
     const r = Math.random();
-    if (r < 0.36) return { kind: 'weapon', id: rollWeapon(central) };
-    if (r < 0.6) return { kind: 'ammo', id: pick(['light', 'light', 'rifle', 'rifle', 'shell', 'sniper']) };
-    if (r < 0.75) return { kind: 'armor', slot: pick(['vest', 'helmet']), lv: Math.random() < 0.7 ? 1 : 2 };
-    if (r < 0.87) return { kind: 'medkit' };
+    if (r < 0.30) return { kind: 'weapon', id: rollWeapon(central) };
+    if (r < 0.50) return { kind: 'ammo', id: pick(['light', 'light', 'rifle', 'rifle', 'shell', 'sniper']) };
+    if (r < 0.62) return { kind: 'armor', slot: pick(['vest', 'helmet']), lv: Math.random() < 0.7 ? 1 : 2 };
+    if (r < 0.71) return { kind: 'medkit' };
+    if (r < 0.83) { const t = Math.random(); return { kind: 'throw', id: t < 0.45 ? 'frag' : t < 0.75 ? 'smoke' : 'flash' }; }
+    if (r < 0.90) { const t = Math.random(); return { kind: 'scope', lv: t < 0.55 ? 2 : t < 0.88 || !central ? 4 : 8 }; } // 8배율은 중앙에만
     return central ? { kind: 'ticket' } : { kind: 'ammo', id: pick(['light', 'rifle']) }; // 티켓은 중앙 쪽에 많이
   }
   function putItem(loot, mx, my) { G.items.push({ loot, mx, my, mesh: WD.addItem(loot.kind, mx, my) }); }
@@ -204,6 +224,8 @@
       players: roster.map(p => ({ id: p.id, name: p.name, me: !!p.me, alive: true, kills: 0, damage: 0, abilities: [], placement: 0 })),
       hp: 100, lagHp: 100, helmet: 0, vest: 0,
       weapons: [null, null, null], cur: -1, mags: [0, 0, 0], reserve: { light: 0, rifle: 0, shell: 0, sniper: 0 }, medkits: 0,
+      throws: { frag: 0, smoke: 0, flash: 0 }, throwSel: 'frag', nextThrow: 0, scopes: [], zoom: 1,
+      charge: null, slam: null, procT: {},
       tickets: 2, actives: [null, null], passives: [null, null], swap: null, everOwned: [],
       zone: { idx: -1, state: 'prep', t: 0, dur: PREP, cur: { x: 300, y: 300, r: 300 }, next: null, from: null },
       clock: 0, speed: 1, myZone, pos: { x: 0, y: 0 }, facing: 0,
@@ -257,7 +279,7 @@
         if (G.firing && curW().mode === 'auto') tryFire();
       }
       G.pos = WD.playerMap(); G.facing = WD.facing();
-      if (!G.dead) { zoneDamage(dt); regen(dt); recordHist(dt); nearItem(); turretStep(t); }
+      if (!G.dead) { zoneDamage(dt); regen(dt); recordHist(dt); nearItem(); turretStep(t); chargeStep(t); slamStep(t); }
       botsStep(dt, t);
       botDeaths();
       castStep(t);
@@ -278,7 +300,7 @@
     const moving = !!(f || s);
     const sprint = moving && f > 0 && held.has(keys.sprint) && !G.crouch && !G.aiming && castKind() !== 'heal';
     let speed = G.crouch ? 2.2 : sprint ? 6.4 : 4.6;
-    if (G.aiming) speed *= 0.6;
+    if (G.aiming && !has('eagle_eye')) speed *= 0.6;
     if (has('swift')) speed *= 1.1;
     const jump = G.jumpReq ? 7 : 0; G.jumpReq = false;
     const res = WD.stepPlayer(dt, { f, s, speed, jump, crouch: G.crouch });
@@ -297,7 +319,21 @@
     $('#zoneDps').textContent = zoneDps();
     hurt(zoneDps() * dt, '자기장');
   }
-  function regen(dt) { if (has('regen') && now() - G.lastHit >= 6 && G.hp < 70) G.hp = Math.min(70, G.hp + 3 * dt); }
+  function regen(dt) {
+    if (!has('regen') || now() - G.lastHit < 6 || G.hp >= 70) return;
+    G.hp = Math.min(70, G.hp + 3 * dt);
+    proc('regen');
+  }
+  /* 패시브가 실제로 효과를 냈을 때 슬롯을 반짝여 알려 줌 */
+  function proc(id, text) {
+    const i = G.passives.findIndex(s => s && s.id === id);
+    if (i < 0 || now() - (G.procT[id] || 0) < 0.9) return;
+    G.procT[id] = now();
+    const el = document.querySelector(`[data-pslot="${i}"]`);
+    if (!el) return;
+    el.classList.remove('proc'); void el.offsetWidth; el.classList.add('proc');
+    if (text) { const s = el.querySelector('small'); s.textContent = text; later(() => { if (s.isConnected) s.textContent = AB[id].short; }, 1100); }
+  }
   function recordHist(dt) {
     G.histT += dt;
     if (G.histT < 0.1) return;
@@ -317,7 +353,7 @@
     let dmg = base * (part === 'head' ? 2 : part === 'limb' ? 0.8 : 1);
     const armor = part === 'head' ? G.helmet : part === 'body' ? G.vest : 0;
     dmg *= 1 - D.armorReduce[armor];
-    if (part !== 'head' && has('iron_skin')) dmg *= 0.9;
+    if (part !== 'head' && has('iron_skin')) { dmg *= 0.9; proc('iron_skin', `피해 −${Math.max(1, Math.round(dmg / 9))}`); }
     hurt(dmg, attacker);
     // 맞은 방향 표시: 0° = 정면
     const ang = from ? (Math.atan2(from.y - G.pos.y, from.x - G.pos.x) - G.facing) * 180 / Math.PI : randInt(0, 359);
@@ -335,7 +371,8 @@
       if (!isAlive(b.id)) return;
       let moving = false;
       if (!isPrep()) {
-        if (t >= b.nextThink) {
+        if (t < (b.blindUntil || 0)) b.target = null; // 섬광탄에 눈이 멀면 쏘지 못하고 헤맴
+        else if (t >= b.nextThink) {
           b.nextThink = t + 0.25;
           const range = t < b.alertUntil ? 90 : 55;
           const dist = Math.hypot(b.x - G.pos.x, b.y - G.pos.y);
@@ -349,12 +386,16 @@
           b.yaw = Math.atan2(-(b.target.x - b.x), -(b.target.y - b.y));
           if (t >= b.nextShot) {
             b.nextShot = t + rand(0.55, 1.2);
-            WD.botFire(b.id);
-            const d = b.target.d;
-            if (b.target.clone) { if (b.target.clone.alive && Math.random() < 0.5) WD.removeClone(b.target.clone); }
-            else {
+            const d = b.target.d, tg = b.target;
+            if (tg.clone) {
+              const hit = tg.clone.alive && Math.random() < 0.5;
+              WD.botFire(b.id, tg.x, 1.3, tg.y, hit);
+              if (hit) WD.removeClone(tg.clone);
+            } else {
               const chance = 0.2 * (d < 15 ? 1.3 : d < 35 ? 1 : 0.65) * (G.moving ? 0.7 : 1) * (G.crouch ? 0.8 : 1);
-              if (Math.random() < chance) takeShot(randInt(18, 26), Math.random() < 0.12 ? 'head' : Math.random() < 0.25 ? 'limb' : 'body', b.name, { x: b.x, y: b.y });
+              const hit = Math.random() < chance;
+              WD.botFire(b.id, G.pos.x, eye.y - 0.35, G.pos.y, hit); // 빗나간 총알도 내 주변으로 날아오는 게 보임
+              if (hit) takeShot(randInt(18, 26), Math.random() < 0.12 ? 'head' : Math.random() < 0.25 ? 'limb' : 'body', b.name, { x: b.x, y: b.y });
             }
           }
         } else {
@@ -376,26 +417,50 @@
       WD.poseBot(b.id, b.x, b.y, b.yaw, moving);
     });
   }
-  function damageBot(id, dmg, head, source, viaAbility) {
+  // pt: 맞은 지점(섬 좌표 {x, h, y}) — 피해 숫자를 띄울 위치. 없으면 봇 머리 위
+  function damageBot(id, dmg, head, source, viaAbility, pt) {
     const b = G.bots[id]; if (!b || !isAlive(id)) return;
     dmg *= 1 - D.armorReduce[head ? b.helmet : b.vest];
     b.hp -= dmg;
     b.alertUntil = now() + 4;
     const hm = $('#hitmarker');
     hm.className = 'hitmarker'; void hm.offsetWidth; hm.className = 'hitmarker show' + (head ? ' head' : '');
+    dmgNumber(pt || { x: b.x, h: 1.9, y: b.y }, dmg, head, b.hp <= 0);
     me().damage += dmg;
-    if (!viaAbility && has('vampire')) G.hp = Math.min(100, G.hp + dmg * 0.15);
+    if (!viaAbility && has('vampire') && G.hp < 100) { G.hp = Math.min(100, G.hp + dmg * 0.15); proc('vampire', `+${Math.round(dmg * 0.15)} 회복`); }
     if (b.hp <= 0) kill(id, me().id, source, viaAbility);
+  }
+  function dmgNumber(pt, dmg, head, lethal) {
+    const p = WD.project(pt.x, pt.h, pt.y);
+    if (!p.on) return;
+    const el = document.createElement('div');
+    el.className = 'dmg-num' + (head ? ' head' : '') + (lethal ? ' lethal' : '');
+    el.textContent = Math.max(1, Math.round(dmg));
+    el.style.left = (p.x + rand(-14, 14)) + 'px'; el.style.top = (p.y + rand(-8, 4)) + 'px';
+    $('#fxLayer').appendChild(el);
+    later(() => el.remove(), 800);
   }
 
   /* ================= 사격 (화면 중앙에서 레이캐스트) ================= */
   function spreadDeg(w) {
     if (w.mode === 'melee') return 0;
     const air = !WD.onGround;
+    if (w.family === '저격총' && !G.aiming) return air ? 8 : 4; // 저격총 지향사격은 크게 빗나감
     let m = air ? 8 : G.aiming ? (G.moving ? 1.5 : 1) : G.sprinting ? 5 : (w.family === '기관단총' ? 2 : 3) * (G.moving ? 1.4 : 1);
     if (G.crouch && !air) m *= 0.8;
+    if (G.aiming && scopeFor(w)) m *= 0.6;
+    if (G.aiming && has('eagle_eye')) m *= 0.65;
     return SPREAD[w.family] * m;
   }
+  /* 스코프: 가진 것 중 지금 무기에 붙일 수 있는 가장 높은 배율 (없으면 0) */
+  function scopeFor(w) {
+    return G.scopes.filter(lv => D.scopes[lv].fam.includes(w.family)).reduce((a, b) => Math.max(a, b), 0);
+  }
+  function zoomFor(w) {
+    if (!G.aiming) return 1;
+    return scopeFor(w) || (w.family === '저격총' || w.family === '지정사수소총' ? 1.6 : 1.25);
+  }
+  const TRACER = { 저격총: { color: '#9fe3ff', width: 0.05 }, 지정사수소총: { color: '#bfe9ff', width: 0.04 }, 산탄총: { color: '#ffd27a', width: 0.018 } };
   function canFire() {
     if (G.dead) return false;
     if (isPrep()) { hint('준비 단계에는 사격할 수 없어요'); return false; }
@@ -417,8 +482,10 @@
     const shotgun = w.family === '산탄총';
     const pellets = shotgun ? 9 : 1, perPellet = shotgun ? 11 : w.dmg;
     const cone = shotgun ? (G.aiming ? 3.6 : 4.5) : spreadDeg(w);
+    const tracer = w.mode === 'melee' ? null : TRACER[w.family] || { color: '#ffe08a', width: 0.03 };
+    if (w.family === '저격총') WD.fovKick(0.03);
     for (let i = 0; i < pellets; i++) {
-      const hit = WD.shoot(cone * Math.PI / 180, w.mode === 'melee' ? w.range : 600);
+      const hit = WD.shoot(cone * Math.PI / 180, w.mode === 'melee' ? w.range : 600, tracer);
       if (!hit || !hit.botId) continue;
       let fall = 1; // 거리 감쇠 (WEAPON 3장)
       if (hit.dist > w.range) {
@@ -427,8 +494,85 @@
       }
       const head = hit.part === 'head';
       const mult = head ? (w.family === '저격총' ? 2.5 : shotgun ? 1.5 : 2) : 1;
-      damageBot(hit.botId, perPellet * mult * fall, head, w.name);
+      damageBot(hit.botId, perPellet * mult * fall, head, w.name, false, { x: hit.point.x + 300, h: hit.point.y, y: hit.point.z + 300 });
     }
+  }
+
+  /* ================= 투척물 (WEAPON 7장) ================= */
+  const throwMax = k => TH[k].max + (has('demolition') ? 1 : 0);
+  function cycleThrow() {
+    const order = THROW_KINDS.slice(THROW_KINDS.indexOf(G.throwSel) + 1).concat(THROW_KINDS.slice(0, THROW_KINDS.indexOf(G.throwSel) + 1));
+    const next = order.find(k => G.throws[k] > 0);
+    if (!next) { hint('투척물이 없어요'); return; }
+    G.throwSel = next;
+    renderThrow();
+  }
+  function throwNow() {
+    if (G.dead || castKind() === 'ticket') return;
+    if (isPrep()) { hint('준비 단계에는 던질 수 없어요'); return; }
+    const k = G.throwSel, t = now();
+    if (G.throws[k] <= 0) { const other = THROW_KINDS.find(x => G.throws[x] > 0); if (!other) { hint('투척물이 없어요'); return; } G.throwSel = other; return throwNow(); }
+    if (t < G.nextThrow) return;
+    G.nextThrow = t + THROW_CD;
+    if (castKind() === 'reload' || castKind() === 'heal') cancelCast();
+    G.throws[k]--;
+    G.aiming = false;
+    const vm = $('#viewmodel'); vm.classList.remove('throwing'); void vm.offsetWidth; vm.classList.add('throwing');
+    WD.throwObj(TH[k].color, D.throwSpeed * (has('demolition') ? 1.3 : 1), TH[k].fuse, p => detonate(k, p));
+    if (G.throws[k] <= 0) { const other = THROW_KINDS.find(x => G.throws[x] > 0); if (other) G.throwSel = other; }
+    renderThrow();
+  }
+  // 폭발 피해: 반경 안, 가로막는 벽이 없으면 거리에 따라 줄어듦
+  function blast(p, r, base, source, viaAbility, hitSelf) {
+    const mul = !viaAbility && has('demolition') ? 1.25 : 1;
+    if (mul > 1) proc('demolition', '폭발 +25%');
+    Object.values(G.bots).forEach(b => {
+      if (!isAlive(b.id)) return;
+      const d = Math.hypot(b.x - p.x, b.y - p.y);
+      if (d > r || !WD.los(p.x, p.h + 0.4, p.y, b.x, 1.0, b.y)) return;
+      damageBot(b.id, base * (1 - 0.75 * d / r) * mul, false, source, viaAbility, { x: b.x, h: 1.9, y: b.y });
+      if (G.bots[b.id] && isAlive(b.id)) knock(b, p, 2.5 * (1 - d / r));
+    });
+    if (hitSelf && !G.dead) {
+      const d = Math.hypot(G.pos.x - p.x, G.pos.y - p.y), e = WD.eyePos();
+      if (d < r && WD.los(p.x, p.h + 0.4, p.y, e.x, e.y - 0.6, e.z)) takeShot(base * (1 - 0.75 * d / r), 'body', '내 수류탄', p);
+    }
+  }
+  function knock(b, from, dist) { // 봇 밀쳐내기
+    const dx = b.x - from.x, dy = b.y - from.y, len = Math.hypot(dx, dy) || 1;
+    const q = { x: b.x - 300, z: b.y - 300 };
+    WD.moveCircle(q, dx / len * dist, dy / len * dist);
+    b.x = q.x + 300; b.y = q.z + 300;
+  }
+  function detonate(kind, p) {
+    if (!G || G.over) return;
+    const t = TH[kind];
+    if (kind === 'frag') { WD.explosion(p.x, p.h, p.y, t.radius); blast(p, t.radius, t.dmg, '수류탄', false, true); }
+    else if (kind === 'smoke') WD.addSmoke(p.x, p.y, t.radius, t.dur);
+    else if (kind === 'flash') {
+      WD.flashBurst(p.x, p.h, p.y);
+      Object.values(G.bots).forEach(b => {
+        const d = Math.hypot(b.x - p.x, b.y - p.y);
+        if (isAlive(b.id) && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, b.x, 1.6, b.y)) { b.blindUntil = now() + t.blind * (1 - 0.5 * d / t.radius); b.target = null; }
+      });
+      // 나도 보고 있었으면 눈이 멂 (등지고 있으면 약하게)
+      const e = WD.eyePos(), d = Math.hypot(G.pos.x - p.x, G.pos.y - p.y);
+      if (!G.dead && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, e.x, e.y, e.z)) {
+        const a = WD.aimDir(), v = { x: p.x - e.x, h: p.h - e.y, y: p.y - e.z }, len = Math.hypot(v.x, v.h, v.y) || 1;
+        const facingIt = (a.x * v.x + a.h * v.h + a.y * v.y) / len > 0.3;
+        const dur = (facingIt ? t.blind : 0.8) * (1 - 0.5 * d / t.radius);
+        const el = document.createElement('div');
+        el.className = 'fx screen fx-flashbang';
+        el.style.animationDuration = dur + 's';
+        $('#fxLayer').appendChild(el);
+        later(() => el.remove(), dur * 1000);
+      }
+    }
+  }
+  function renderThrow() {
+    const k = G.throwSel, n = G.throws[k], total = THROW_KINDS.reduce((s, x) => s + G.throws[x], 0);
+    $('#throwSlot').className = 'throw-slot' + (total ? '' : ' none');
+    $('#throwSlot').innerHTML = `${icon(k)}<span><b>${TH[k].name} ×${n}</b><small>${THROW_KINDS.filter(x => x !== k && G.throws[x]).map(x => `${TH[x].name} ${G.throws[x]}`).join(' · ') || '&nbsp;'}</small></span><kbd>${esc(K('throw'))}</kbd><kbd class="sub">${esc(K('cycle_throw'))}</kbd>`;
   }
 
   function startReload() {
@@ -438,7 +582,7 @@
     if (mag >= w.mag) return;
     if (G.reserve[w.ammo] <= 0) { hint(`${D.ammo[w.ammo].name}이 없어요`); return; }
     let time = w.family === '산탄총' ? 0.5 * Math.min(w.mag - mag, G.reserve[w.ammo]) : w.reload;
-    if (has('quick_hands')) time *= 0.75;
+    if (has('quick_hands')) { time *= 0.75; proc('quick_hands', `재장전 −${(time / 3).toFixed(1)}초`); }
     const slot = G.cur;
     G.aiming = false;
     startCast('reload', '재장전', time, () => {
@@ -576,7 +720,9 @@
     const a = AB[s.id], t = now();
     if (isPrep()) { hint('준비 단계에는 능력을 쓸 수 없어요'); return; }
     if (castKind() === 'ticket') { hint('티켓 사용 중에는 능력을 쓸 수 없어요'); return; }
-    if (!WD.onGround && !['blink_dash', 'rewind'].includes(s.id)) { hint('공중에서는 쓸 수 없는 능력이에요'); return; }
+    if (!WD.onGround && !['blink_dash', 'rewind', 'ground_slam', 'chain_lightning', 'meteor'].includes(s.id)) { hint('공중에서는 쓸 수 없는 능력이에요'); return; }
+    const why = PRECHECK[s.id] && PRECHECK[s.id]();
+    if (why) { hint(why); return; }
     if (a.charges) {
       if (s.charges <= 0) { hint(`${a.name} 충전 중 (${Math.ceil(s.rechargeEnd - t)}초)`); return; }
       s.charges--;
@@ -590,6 +736,7 @@
     G.aiming = false;
     G.abilityUses++;
     EFFECTS[s.id](a);
+    flash(`fx-cast g-${a.grade}`, 500); // 화면 가장자리에 등급 색 번쩍
     const slotEl = document.querySelector(`[data-aslot="${i}"]`);
     if (slotEl) { slotEl.classList.remove('fired'); void slotEl.offsetWidth; slotEl.classList.add('fired'); }
   }
@@ -606,9 +753,93 @@
     $('#fxLayer').appendChild(el);
     later(() => el.remove(), ms);
   }
+  // 조준선 근처(12° 안, 40m 안, 벽에 안 가린) 가장 가운데 있는 적
+  function lightningTarget() {
+    const dir = WD.aimDir(), e = WD.eyePos();
+    let best = null, bestCos = Math.cos(12 * Math.PI / 180);
+    Object.values(G.bots).forEach(b => {
+      if (!isAlive(b.id)) return;
+      const v = { x: b.x - e.x, h: 1.3 - e.y, y: b.y - e.z }, d = Math.hypot(v.x, v.h, v.y);
+      if (d > 40 || d < 0.5) return;
+      const c = (v.x * dir.x + v.h * dir.h + v.y * dir.y) / d;
+      if (c > bestCos && WD.los(e.x, e.y, e.z, b.x, 1.3, b.y)) { bestCos = c; best = b; }
+    });
+    return best;
+  }
+  const PRECHECK = {
+    chain_lightning: () => lightningTarget() ? null : '조준선 근처(40m)에 적이 없어요',
+    charge: () => G.charge ? '이미 돌진 중이에요' : null
+  };
+  function chargeStep(t) {
+    const c = G.charge;
+    if (!c) return;
+    Object.values(G.bots).forEach(b => {
+      if (!isAlive(b.id) || c.hit.has(b.id) || Math.hypot(b.x - G.pos.x, b.y - G.pos.y) > 1.9) return;
+      c.hit.add(b.id);
+      knock(b, G.pos, 4);
+      WD.shake(0.45);
+      WD.ring(b.x, b.y, { color: '#ffb347', r1: 2.5, life: 0.35 });
+      damageBot(b.id, 40, false, 'charge', true);
+    });
+    if (!WD.dashing || t > c.until) { WD.trail(c.from, '#ffb347'); G.charge = null; }
+  }
+  function slamStep(t) {
+    const s = G.slam;
+    if (!s) return;
+    if (t - s.t > 4) { G.slam = null; return; }
+    if (!s.down && t >= s.downAt) { s.down = true; WD.highJump(-30); }
+    if (!s.down || !WD.onGround) return;
+    G.slam = null;
+    WD.slamImpact(6, '#ffb347');
+    flash('fx-slam', 350);
+    Object.values(G.bots).forEach(b => {
+      const d = Math.hypot(b.x - G.pos.x, b.y - G.pos.y);
+      if (!isAlive(b.id) || d > 6 || !WD.los(G.pos.x, 0.6, G.pos.y, b.x, 0.8, b.y)) return;
+      knock(b, G.pos, 3.5 * (1 - d / 6) + 1);
+      damageBot(b.id, 50 * (1 - 0.5 * d / 6), false, 'ground_slam', true);
+    });
+  }
   const EFFECTS = {
-    blink_dash() { WD.blink(10); flash('fx-blink', 450); },
-    high_jump() { WD.highJump(Math.sqrt(2 * 22 * 12)); },
+    blink_dash() { const from = G.pos; WD.blink(10); WD.trail(from, '#7fd4ff'); WD.fovKick(0.14); flash('fx-blink', 450); },
+    high_jump() { WD.highJump(Math.sqrt(2 * 22 * 12)); WD.burstAtPlayer('#9fe870', 5); WD.fovKick(0.08); flash('fx-jump', 400); },
+    charge() {
+      G.charge = { from: G.pos, hit: new Set(), until: now() + 0.8 };
+      WD.dash(12, 32); WD.fovKick(0.25); WD.burstAtPlayer('#ffb347', 2.5);
+      flash('fx-charge', 550);
+    },
+    ground_slam() {
+      const t = now();
+      if (WD.onGround) { WD.highJump(9); G.slam = { t, downAt: t + 0.38, down: false }; WD.burstAtPlayer('#ffb347', 2.5); }
+      else G.slam = { t, downAt: t, down: false };
+    },
+    chain_lightning() {
+      const first = lightningTarget(); if (!first) return;
+      const e = WD.eyePos();
+      WD.lightning({ x: e.x, h: e.y - 0.35, y: e.z }, { x: first.x, h: 1.3, y: first.y });
+      flash('fx-zap', 300);
+      damageBot(first.id, 35, false, 'chain_lightning', true);
+      // 주변 12m 적 2명에게 차례로 튐
+      let from = first;
+      const hit = new Set([first.id]);
+      [1, 2].forEach(n => later(() => {
+        const next = Object.values(G.bots).filter(b => isAlive(b.id) && !hit.has(b.id) && Math.hypot(b.x - from.x, b.y - from.y) < 12 && WD.los(from.x, 1.3, from.y, b.x, 1.3, b.y))
+          .sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y))[0];
+        if (!next) return;
+        hit.add(next.id);
+        WD.lightning({ x: from.x, h: 1.3, y: from.y }, { x: next.x, h: 1.3, y: next.y });
+        damageBot(next.id, 20, false, 'chain_lightning', true);
+        from = next;
+      }, n * 140));
+    },
+    meteor() {
+      const p = WD.aimPoint(45);
+      flash('fx-meteor', 600);
+      WD.meteor(p.x, p.y, 8, 1.2, () => {
+        if (!G || G.over) return;
+        blast({ x: p.x, h: 0.5, y: p.y }, 8, 90, 'meteor', true, false);
+        if (!G.dead && Math.hypot(G.pos.x - p.x, G.pos.y - p.y) < 14) flash('fx-slam', 350);
+      });
+    },
     barrier(a) { const h = WD.addBarrier(); later(() => h.remove(), a.dur * 1000); },
     clone(a) {
       const color = D.palette[store.get('outfit').top[1]];
@@ -621,10 +852,15 @@
       G.turretNext = now() + 1.0; // 설치 1초
       later(() => { h.remove(); G.turret = null; }, a.dur * 1000);
     },
-    xray(a) { WD.setXray(true); flash('fx-xray-tint', a.dur * 1000); later(() => WD.setXray(false), a.dur * 1000); },
+    xray(a) {
+      WD.setXray(true); flash('fx-xray-tint', a.dur * 1000); later(() => WD.setXray(false), a.dur * 1000);
+      WD.pulse({ color: '#ff4d40', r0: 1, r1: 50, life: 1.0, thick: 0.03, opacity: 0.9 }); // 반경 50m로 퍼지는 탐지파
+      later(() => WD.pulse({ color: '#ff8a80', r0: 1, r1: 50, life: 1.0, thick: 0.02, opacity: 0.6 }), 200);
+    },
     rewind() {
-      const snap = G.hist[0];
-      if (snap) { G.hp = Math.max(G.hp, snap.hp); G.mags = snap.mag.slice(); WD.setPos(snap.pos.x, snap.pos.y); }
+      const snap = G.hist[0], from = G.pos;
+      if (snap) { G.hp = Math.max(G.hp, snap.hp); G.mags = snap.mag.slice(); WD.setPos(snap.pos.x, snap.pos.y); WD.trail(from, '#b48cff'); }
+      WD.burstAtPlayer('#b48cff', 3);
       flash('fx-rewind', 900);
       renderWeapons();
     }
@@ -638,6 +874,7 @@
       .find(x => WD.los(tp.mx, 1.0, tp.my, x.b.x, 1.3, x.b.y));
     if (!tgt) return;
     tp.aim(tgt.b.x, tgt.b.y);
+    WD.turretShot(tp, tgt.b.x + (Math.random() < 0.35 ? 0 : rand(-1, 1)), tgt.b.y + rand(-0.4, 0.4));
     if (Math.random() < 0.35) damageBot(tgt.b.id, 7, false, 'turret', true);
   }
 
@@ -663,6 +900,7 @@
         G.actives.forEach(s => { if (!s) return; s.cdEnd = s.activeUntil > now() ? s.activeUntil : 0; if (AB[s.id].charges) { s.charges = AB[s.id].charges; s.rechargeEnd = null; } });
         G.hp = Math.min(100, G.hp + 25);
         toast('사냥꾼: 쿨타임 초기화 + 체력 25 회복', 'ok');
+        later(() => proc('hunter', '쿨 초기화!'), 0); // 아래 renderAbilities 뒤에 반짝이도록
       }
       renderAbilities();
     }
@@ -697,7 +935,8 @@
     const m = me();
     m.alive = false;
     m.placement = alive().length + 1;
-    feed(source === '자기장' ? '자기장' : source, m.name, source === '자기장' ? '자기장' : 'AR-556', false, false, true);
+    const env = source === '자기장' || source === '내 수류탄'; // 쏜 사람이 없는 죽음
+    feed(env ? '자기장' : source, m.name, env ? source : 'AR-556', false, false, true);
     $('#aliveCount').textContent = alive().length;
     G.swap = null; $('#swap').hidden = true; $('#roulette').hidden = true; $('#prompt').classList.remove('show');
     G.actives = [null, null]; G.passives = [null, null]; // 사망하면 능력 모두 사라짐
@@ -705,7 +944,7 @@
     WD.setMode('dead');
     unlock(true);
     const d = $('#deathOverlay');
-    d.innerHTML = `<div class="death-box"><p class="death-rank">#${m.placement} / ${G.players.length}</p><h2>${source === '자기장' ? '자기장에 쓰러졌어요' : `${esc(source)} 님에게 처치당했어요`}</h2>
+    d.innerHTML = `<div class="death-box"><p class="death-rank">#${m.placement} / ${G.players.length}</p><h2>${source === '자기장' ? '자기장에 쓰러졌어요' : source === '내 수류탄' ? '내 수류탄에 쓰러졌어요' : `${esc(source)} 님에게 처치당했어요`}</h2>
       <p class="muted">처치 ${m.kills} · 데미지 ${Math.round(m.damage)}</p>
       <div class="death-actions"><button class="btn btn-lg" id="spectateBtn">관전하기</button><button class="btn btn-lg btn-primary" id="toResult">결과 보기</button></div></div>`;
     d.hidden = false;
@@ -738,6 +977,8 @@
     if (l.kind === 'ammo') return `${D.ammo[l.id].name} ${D.ammo[l.id].bundle}발`;
     if (l.kind === 'armor') return `${l.slot === 'vest' ? '방탄조끼' : '헬멧'} ${l.lv}단계`;
     if (l.kind === 'medkit') return '구급상자';
+    if (l.kind === 'throw') return TH[l.id].name;
+    if (l.kind === 'scope') return D.scopes[l.lv].name;
     return '랜덤 능력 티켓';
   }
   function nearItem() {
@@ -781,8 +1022,19 @@
       if (G.tickets >= MAX_TICKETS) { hint('티켓은 최대 3장까지 들 수 있어요'); return; }
       G.tickets++;
       renderAbilities();
+    } else if (l.kind === 'throw') {
+      if (G.throws[l.id] >= throwMax(l.id)) { hint(`${TH[l.id].name}은 ${throwMax(l.id)}개까지 들 수 있어요`); return; }
+      G.throws[l.id]++;
+      if (!G.throws[G.throwSel]) G.throwSel = l.id;
+      renderThrow();
+    } else if (l.kind === 'scope') {
+      if (G.scopes.includes(l.lv)) { hint('이미 가진 스코프예요'); return; }
+      G.scopes.push(l.lv);
+      if (G.cur >= 0) renderViewmodel();
+      const fams = D.scopes[l.lv].fam.join('·');
+      toast(`${lootName(l)} 획득 — 조준(${K('aim')}) 시 ${l.lv}배 확대 · ${fams}`, 'ok');
     }
-    toast(`${lootName(l)} 획득`);
+    if (l.kind !== 'scope') toast(`${lootName(l)} 획득`);
     WD.removeItem(it.mesh);
     G.items = G.items.filter(x => x !== it);
     G.nearItem = null;
@@ -796,11 +1048,17 @@
   }
 
   /* ================= 렌더링 ================= */
-  function renderAll() { renderAbilities(); renderViewmodel(); renderPrompt(); updateHud(now()); $('#aliveCount').textContent = alive().length; $('#killCount').textContent = 0; }
+  function renderAll() { renderAbilities(); renderViewmodel(); renderThrow(); renderPrompt(); updateHud(now()); $('#aliveCount').textContent = alive().length; $('#killCount').textContent = 0; }
 
   function renderAbilities() {
     const keys = [K('ability_1'), K('ability_2')];
     const slot = (s, i, kind) => {
+      // 패시브: 아이콘 + 이름 + 효과 한 줄 (효과가 터지면 반짝이며 결과를 잠깐 보여 줌)
+      if (kind === 'passive') {
+        if (!s) return `<div class="pchip empty"><span class="pico">P</span><div><b>패시브 ${i + 1}</b><small>빈 슬롯</small></div></div>`;
+        const a = AB[s.id];
+        return `<div class="pchip g-${a.grade}" data-pslot="${i}" title="${esc(a.name)} — ${esc(a.desc)}"><span class="pico">${icon(s.id)}</span><div><b>${esc(a.name)}</b><small>${esc(a.short || a.desc)}</small></div></div>`;
+      }
       if (!s) return `<div class="aslot empty ${kind}"><kbd>${kind === 'active' ? esc(keys[i]) : 'P'}</kbd><span>${kind === 'active' ? '빈 슬롯' : '패시브'}</span></div>`;
       const a = AB[s.id];
       return `<div class="aslot ${kind} g-${a.grade}" ${kind === 'active' ? `data-aslot="${i}"` : ''} title="${esc(a.name)} — ${esc(a.desc)}">
@@ -842,14 +1100,15 @@
     const w = curW();
     $('#ammoMag').textContent = w.mag ? G.mags[G.cur] : '—';
     $('#ammoReserve').textContent = w.ammo ? G.reserve[w.ammo] : '—';
-    $('#fireMode').textContent = { semi: '단발', auto: '자동', pump: '펌프', bolt: '볼트', melee: '근접' }[w.mode] + ' · ' + w.name;
+    const sc = scopeFor(w);
+    $('#fireMode').textContent = { semi: '단발', auto: '자동', pump: '펌프', bolt: '볼트', melee: '근접' }[w.mode] + ' · ' + w.name + (sc ? ` · ${sc}× 스코프` : '');
   }
 
   function renderViewmodel() {
     const id = G.cur >= 0 ? G.weapons[G.cur] : null;
     const sleeve = D.palette[store.get('outfit').top[1]];
     const fam = id ? W[id].family : '맨손';
-    const len = { 권총: 90, 기관단총: 150, 돌격소총: 210, 산탄총: 220, 지정사수소총: 250, 저격총: 280, 근접: 0 }[fam];
+    const len = { 권총: 90, 기관단총: 150, 돌격소총: 210, 경기관총: 240, 산탄총: 220, 지정사수소총: 250, 저격총: 280, 근접: 0 }[fam];
     let gun;
     if (!id) gun = `
       <g transform="rotate(-18 170 300)"><rect x="140" y="220" width="64" height="150" rx="24" fill="${sleeve}"/><rect x="134" y="168" width="76" height="66" rx="22" fill="#d9a88a"/><path d="M146 186h52M146 204h52" stroke="#b98a6e" stroke-width="3" stroke-linecap="round"/></g>
@@ -861,8 +1120,9 @@
         <rect x="${330 - len - 14}" y="122" width="18" height="12" rx="2" fill="#1d2023"/>
         <rect x="300" y="108" width="120" height="44" rx="6" fill="#3a3f45"/>
         ${fam !== '권총' ? `<rect x="400" y="116" width="${fam === '저격총' || fam === '지정사수소총' ? 120 : 90}" height="30" rx="6" fill="#33383d"/>` : ''}
-        ${fam === '저격총' || fam === '지정사수소총' ? '<rect x="300" y="86" width="110" height="20" rx="8" fill="#16181a"/><circle cx="300" cy="96" r="12" fill="#3b6b8f"/>' : '<rect x="330" y="98" width="30" height="12" rx="3" fill="#16181a"/>'}
-        ${W[id].mag && fam !== '산탄총' ? `<rect x="${fam === '권총' ? 352 : 330}" y="148" width="26" height="${fam === '권총' ? 34 : 60}" rx="4" fill="#26292d" transform="rotate(8 340 150)"/>` : ''}
+        ${scopeFor(W[id]) ? '<rect x="300" y="86" width="110" height="20" rx="8" fill="#16181a"/><circle cx="300" cy="96" r="12" fill="#3b6b8f"/>' : '<rect x="330" y="98" width="30" height="12" rx="3" fill="#16181a"/>'}
+        ${fam === '경기관총' ? '<rect x="318" y="146" width="46" height="46" rx="6" fill="#4a4f39"/><rect x="200" y="138" width="10" height="40" rx="3" fill="#1d2023" transform="rotate(10 205 140)"/>' : ''}
+        ${W[id].mag && fam !== '산탄총' && fam !== '경기관총' ? `<rect x="${fam === '권총' ? 352 : 330}" y="148" width="26" height="${fam === '권총' ? 34 : 60}" rx="4" fill="#26292d" transform="rotate(8 340 150)"/>` : ''}
         <rect x="378" y="148" width="28" height="56" rx="6" fill="#26292d" transform="rotate(14 392 150)"/>
         <circle cx="${330 - len - 16}" cy="128" r="4" class="muzzle"/>
       </g>
@@ -884,7 +1144,9 @@
         <h3>탄약</h3><div class="inv-ammo">${Object.keys(D.ammo).map(k => `<div><small>${D.ammo[k].name}</small><b>${G.reserve[k]}</b><span>/${D.ammo[k].max}</span></div>`).join('')}</div>
         <h3>장비·소모품</h3><div class="inv-row"><b>헬멧</b><span>${G.helmet ? `${G.helmet}단계 · 피해 −${D.armorReduce[G.helmet] * 100}%` : '없음'}</span></div>
         <div class="inv-row"><b>방탄조끼</b><span>${G.vest ? `${G.vest}단계 · 피해 −${D.armorReduce[G.vest] * 100}%` : '없음'}</span></div>
-        <button class="inv-row inv-use" id="invMedkit" ${G.medkits ? '' : 'disabled'}><b>구급상자 ×${G.medkits}</b><span>클릭해서 사용 (3초, 체력 +75)</span></button></section>
+        <button class="inv-row inv-use" id="invMedkit" ${G.medkits ? '' : 'disabled'}><b>구급상자 ×${G.medkits}</b><span>클릭해서 사용 (3초, 체력 +75)</span></button>
+        <h3>투척물 <small>${esc(K('throw'))} 던지기 · ${esc(K('cycle_throw'))} 바꾸기</small></h3><div class="inv-ammo">${THROW_KINDS.map(k => `<div class="${G.throwSel === k ? 'sel' : ''}"><small>${TH[k].name}</small><b>${G.throws[k]}</b><span>/${throwMax(k)}</span></div>`).join('')}</div>
+        <h3>스코프</h3><div class="inv-row ${G.scopes.length ? '' : 'empty'}"><b>${G.scopes.length ? G.scopes.slice().sort((a, b) => a - b).map(lv => lv + '×').join(' · ') : '없음'}</b><span>${G.cur >= 0 && scopeFor(curW()) ? `지금 무기에 ${scopeFor(curW())}× 사용 중` : '조준할 때 맞는 배율이 자동으로 붙어요'}</span></div></section>
       <section><h3>능력</h3>${abRow(G.actives[0], `액티브 ${esc(K('ability_1'))}`)}${abRow(G.actives[1], `액티브 ${esc(K('ability_2'))}`)}${abRow(G.passives[0], '패시브 1')}${abRow(G.passives[1], '패시브 2')}
         <h3>랜덤 능력 티켓</h3><div class="inv-tickets" id="invTicket" title="우클릭으로 사용">${Array.from({ length: MAX_TICKETS }, (_, i) => `<span class="${i < G.tickets ? 'on' : ''}">${icon('ticket')}</span>`).join('')}<small>우클릭 또는 ${esc(K('use_ticket'))} 키로 사용 · 최대 3장</small></div></section>
     </div><p class="overlay-hint">${esc(K('inventory'))} 키로 닫기</p>`;
@@ -912,8 +1174,13 @@
     const w = curW();
     if (w.mag) { $('#ammoMag').textContent = G.mags[G.cur]; $('#ammoMag').classList.toggle('low', G.mags[G.cur] <= Math.ceil(w.mag * 0.25)); }
     if (w.ammo) $('#ammoReserve').textContent = G.reserve[w.ammo];
-    // 조준: 화면 확대 (저격·지정사수는 2배)
-    WD.setAds(G.aiming ? (w.family === '저격총' || w.family === '지정사수소총' ? 2 : 1.25) : 1);
+    // 조준: 화면 확대 (스코프가 있으면 그 배율, 4배율 이상은 스코프 화면)
+    G.zoom = zoomFor(w);
+    WD.setAds(G.zoom);
+    const scoped = G.aiming && G.zoom >= 4;
+    $('#scopeView').hidden = !scoped;
+    if (scoped) $('#scopeMag').textContent = G.zoom + '×';
+    document.querySelector('.screen-hud').classList.toggle('scoped', scoped);
     $('#viewmodel').classList.toggle('ads', G.aiming);
     $('#crosshair').classList.toggle('ads', G.aiming);
     $('#crosshair').style.setProperty('--gap', Math.round(clamp(5 + spreadDeg(w) * 4, 5, 34)) + 'px');
@@ -960,6 +1227,8 @@
       case 'ability_1': useAbility(0); break;
       case 'ability_2': useAbility(1); break;
       case 'use_ticket': useTicket(); break;
+      case 'throw': throwNow(); break;
+      case 'cycle_throw': cycleThrow(); break;
       case 'discard_ability': if (G.swap) resolveSwap('discard'); break;
       case 'weapon_1': switchWeapon(0); break;
       case 'weapon_2': switchWeapon(1); break;
@@ -1002,10 +1271,15 @@
   document.addEventListener('mousemove', e => {
     if (blocked() || G.dead) return;
     const free = held.has(store.get('keys').freelook);
-    const k = 0.0022 * (G.aiming ? store.get('sensAds') : store.get('sens'));
+    // 배율이 높을수록 시점이 덜 돌게 (8배율에서 손 떨림처럼 휙휙 돌지 않도록)
+    const k = 0.0022 * (G.aiming ? store.get('sensAds') * Math.min(1, 1.6 / G.zoom) : store.get('sens'));
     const inv = store.get('invertY') ? -1 : 1;
     if (G.locked) WD.look(e.movementX * k, e.movementY * k * inv, free);
-    else if (drag && !overlayOpen()) { WD.look((e.clientX - drag.x) * k, (e.clientY - drag.y) * k * inv, free); drag.x = e.clientX; drag.y = e.clientY; }
+    else if (drag && !overlayOpen()) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.dist += Math.abs(dx) + Math.abs(dy);
+      WD.look(dx * k, dy * k * inv, free); drag.x = e.clientX; drag.y = e.clientY;
+    }
   });
   const hudEl = document.querySelector('.screen-hud');
   hudEl.addEventListener('mousedown', e => {
@@ -1013,16 +1287,22 @@
     if (document.activeElement === chat.input) chat.input.blur();
     if (!G.locked) {
       if (!G.noLock) { lock(); $('#clickHint').hidden = true; return; }
-      drag = { x: e.clientX, y: e.clientY };
+      drag = { x: e.clientX, y: e.clientY, dist: 0, button: e.button };
     }
     const action = store.actionFor('Mouse' + e.button);
-    if (action) { e.preventDefault(); handleAction(action, true, e); }
+    if (!action) return;
+    e.preventDefault();
+    // 드래그 모드: 사격 버튼은 누를 때 쏘지 않고, 끌지 않고 뗐을 때(짧은 클릭) 한 발 쏨 → 시점 돌리다 총이 나가지 않음
+    if (drag && action === 'fire') return;
+    handleAction(action, true, e);
   });
   document.addEventListener('mouseup', e => {
-    drag = null;
+    const d = drag; drag = null;
     if (blocked()) return;
     const action = store.actionFor('Mouse' + e.button);
-    if (action) handleAction(action, false, e);
+    if (!action) return;
+    if (d && action === 'fire') { if (d.button === e.button && d.dist < 6) { handleAction('fire', true, e); handleAction('fire', false, e); } return; }
+    handleAction(action, false, e);
   });
   hudEl.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -1048,12 +1328,30 @@
     if (act === 'kill' && !G.dead) { const t = nearest(); if (t) { me().damage += Math.max(0, t.hp); kill(t.id, me().id, curW().name); } }
     if (act === 'win' && !G.dead) alive().filter(p => !p.me).forEach(p => { me().damage += 100; kill(p.id, me().id, curW().name); });
     if (act === 'die' && !G.dead) { G.hp = 0; die(enemyName()); }
+    if (act === 'kit' && !G.dead) { // 새 무기·투척물·스코프를 바로 시험
+      G.weapons = ['lm60', pick(['br300', 'sv98', 'amr50']), 'p9'];
+      G.mags = G.weapons.map(id => W[id].mag);
+      Object.keys(G.reserve).forEach(k => { G.reserve[k] = D.ammo[k].max; });
+      THROW_KINDS.forEach(k => { G.throws[k] = throwMax(k); });
+      G.scopes = [2, 4, 8]; G.cur = 1;
+      renderViewmodel(); renderThrow(); renderInv();
+      toast('데모 장비 지급: 경기관총 · 저격총 · 투척물 · 스코프', 'ok');
+    }
+    if (act === 'abil' && !G.dead) { // 새 액티브 능력을 두 개씩 돌아가며 지급
+      const sets = [['charge', 'ground_slam'], ['chain_lightning', 'meteor'], ['blink_dash', 'xray'], ['turret', 'barrier']];
+      G.demoSet = ((G.demoSet ?? -1) + 1) % sets.length;
+      G.actives = sets[G.demoSet].map(newSlot);
+      if (!G.passives[0]) G.passives = [newSlot('eagle_eye'), newSlot('demolition')];
+      sets[G.demoSet].forEach(id => { if (!G.everOwned.includes(id)) G.everOwned.push(id); });
+      renderAbilities();
+      toast(`능력 지급: ${sets[G.demoSet].map(id => AB[id].name).join(', ')}`, 'ok');
+    }
   });
 
   LF.hudDebug = () => G; // 개발용: 콘솔에서 매치 상태 확인
 
   LF.registerScreen('hud', {
     enter(params) { held.clear(); start(params.session); },
-    leave() { cancelAnimationFrame(raf); if (G) { G.over = true; G.timers.forEach(clearTimeout); } held.clear(); unlock(true); }
+    leave() { cancelAnimationFrame(raf); if (G) { G.over = true; G.timers.forEach(clearTimeout); } held.clear(); unlock(true); hudEl.classList.remove('scoped'); }
   });
 })();
