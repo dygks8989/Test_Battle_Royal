@@ -21,6 +21,7 @@ python -m http.server 5173 --bind 127.0.0.1
 - `.claude/launch.json`에 같은 설정(`static`)이 있어 미리보기 창에서 바로 띄울 수 있습니다.
 - `http://localhost:5173/` = 로비, `#hud` = 봇 4명과 혼자 연습(로비의 "혼자 연습"과 같음), `#custom` = 캐릭터 꾸미기.
 - 온라인 대전 확인: 같은 주소를 탭 두 개로 열고, 한쪽에서 방 만들기 → 다른 쪽에서 입장 → 둘 다 준비. 닉네임은 localStorage를 공유하므로 각 탭에서 입장 직전에 바꿉니다. 미리보기 창에서는 배경 탭의 렌더 루프가 멈추므로 아래 디버깅 메모의 `requestAnimationFrame` 대체를 두 탭 모두에 적용합니다.
+- 공유·검색용 메타정보(탭 제목, description, Open Graph·Twitter 카드, schema.org `VideoGame` JSON-LD, SVG 파비콘)는 [index.html](index.html) `<head>`에 있습니다. 인원(2~5명)·장르·소개 문구를 바꾸면 여기와 로비 히어로 문구도 함께 맞춥니다. 배포 주소가 정해지면 `og:url`·`og:image`를 추가합니다.
 - 배포: 빌드 없는 정적 사이트라 Vercel에서 이 저장소를 가져오기만 하면 됩니다(Framework Preset: Other, 빌드 명령 없음).
 - 3D는 Three.js **r128**(cdnjs, 전역 `THREE`가 있는 마지막 비모듈 빌드), 온라인은 supabase-js **2.45.4** UMD(jsdelivr, 전역 `supabase`)를 불러옵니다. 인터넷이 막힌 환경에서는 인게임이 뜨지 않고, 온라인 연결만 실패하면 로비에 "연결 안 됨"이 뜨고 혼자 연습만 됩니다.
 - 문법 확인: `for f in js/*.js; do node --check "$f" || echo "FAIL $f"; done`
