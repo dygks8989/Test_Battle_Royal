@@ -495,12 +495,12 @@
     }
     ray.set(camera.position, dir); ray.far = range;
     const hit = ray.intersectObjects(hitList(true), true)[0];
+    const end = hit ? hit.point.clone() : camera.position.clone().addScaledVector(dir, Math.min(range, 300));
     if (tracer) {
-      const end = hit ? hit.point.clone() : camera.position.clone().addScaledVector(dir, Math.min(range, 300));
       addTracer(muzzlePos(), end, tracer.color, tracer.width);
       if (hit) sparks(hit.point, hit.object.userData.part ? '#ff5a4a' : '#ffd27a', hit.object.userData.part ? 8 : 5);
     }
-    if (!hit) return null;
+    if (!hit) return { dist: range, point: end, part: null, botId: null, clone: null, miss: true }; // 빗나가도 끝점은 줌 (다른 사람 화면에 궤적 표시용)
     const own = ownerOf(hit.object);
     const res = { dist: hit.distance, point: hit.point, part: hit.object.userData.part || null, botId: own.botId || null, clone: own.clone || null };
     if (!res.botId && !res.clone && hit.face) decal(hit);
@@ -547,9 +547,9 @@
     dyn.bots[id] = { g, dead: false };
     if (xrayOn) setXrayLook(g, true, xrayMat);
   }
-  function poseBot(id, mx, my, yaw, moving) {
+  function poseBot(id, mx, my, yaw, moving, h = 0) {
     const b = dyn.bots[id]; if (!b || b.dead) return;
-    b.g.position.set(mx - 300, 0, my - 300);
+    b.g.position.set(mx - 300, h, my - 300);
     b.g.rotation.y = yaw;
     const sw = moving ? Math.sin(clock * 9) * 0.6 : 0;
     b.g.userData.legs[0].rotation.x = sw; b.g.userData.legs[1].rotation.x = -sw;
@@ -601,22 +601,23 @@
 
   /* ---------- 능력 오브젝트 ---------- */
   function ahead(dist) { return [P.x - Math.sin(P.yaw) * dist, P.z - Math.cos(P.yaw) * dist]; }
-  function addBarrier() {
-    const [x, z] = ahead(3);
+  // at: {x, y, yaw} 섬 좌표 — 없으면 내 앞 3m (다른 플레이어가 쓴 능력을 그대로 재현할 때 at을 줌)
+  function addBarrier(at) {
+    const [x, z] = at ? [at.x - 300, at.y - 300] : ahead(3), yaw = at ? at.yaw : P.yaw;
     const m = new T.Mesh(new T.BoxGeometry(4, 2.5, 0.3), new T.MeshLambertMaterial({ color: '#6ebeff', transparent: true, opacity: 0.45, emissive: '#1d4f7a' }));
-    m.position.set(x, 1.25, z); m.rotation.y = P.yaw;
+    m.position.set(x, 1.25, z); m.rotation.y = yaw;
     scene.add(m); dyn.objs.push(m); dyn.solids.push(m);
     // 땅에서 솟아오르는 연출
     m.scale.y = 0.01;
     addFx(new T.Group(), 0.3, k => { m.scale.y = Math.max(0.01, easeOut(k)); m.position.y = 1.25 * m.scale.y; });
     ring(V(x, 0.08, z), { color: '#6ebeff', r1: 3.5, life: 0.45 });
     particles(V(x, 0.3, z), { color: '#9fd6ff', n: 20, speed: 3, up: 4, size: 0.08, life: 0.6 });
-    const col = { x, z, hw: 2, hd: 0.15, a: P.yaw, top: 2.5 };
+    const col = { x, z, hw: 2, hd: 0.15, a: yaw, top: 2.5 };
     dyn.colliders.push(col);
-    return { remove() { scene.remove(m); dyn.solids = dyn.solids.filter(s => s !== m); dyn.colliders = dyn.colliders.filter(c => c !== col); } };
+    return { at: { x: x + 300, y: z + 300, yaw }, remove() { scene.remove(m); dyn.solids = dyn.solids.filter(s => s !== m); dyn.colliders = dyn.colliders.filter(c => c !== col); } };
   }
-  function addTurret() {
-    const [x, z] = ahead(3);
+  function addTurret(at) {
+    const [x, z] = at ? [at.x - 300, at.y - 300] : ahead(3);
     const g = new T.Group();
     const base = new T.Mesh(new T.CylinderGeometry(0.15, 0.5, 0.9, 8), mat('#4b5258')); base.position.y = 0.45;
     const head = new T.Group(); head.position.y = 1.0;
@@ -630,12 +631,12 @@
     particles(V(x, 0.5, z), { color: '#ffb36b', n: 14, speed: 2.5, up: 3, size: 0.07, life: 0.5 });
     return { mx: x + 300, my: z + 300, barrel, aim(tx, ty) { head.rotation.y = Math.atan2(-(tx - 300 - x), -(ty - 300 - z)); }, remove() { scene.remove(g); particles(V(x, 0.6, z), { color: '#8a8f94', n: 10, speed: 2, up: 2, size: 0.1, life: 0.5, solid: true }); } };
   }
-  function addClone(color, offset) {
+  function addClone(color, offset, at) {
     const g = humanoid(color);
-    const yaw = P.yaw + offset;
-    g.position.set(P.x, 0, P.z); g.rotation.y = yaw;
-    particles(V(P.x, 1, P.z), { color: '#d9dde2', n: 12, speed: 2, up: 1.5, size: 0.35, life: 0.7, gravity: -0.5, solid: true, grow: 2 });
-    const c = { g, yaw, pos: { x: P.x, z: P.z }, alive: true };
+    const yaw = (at ? at.yaw : P.yaw) + offset, px = at ? at.x - 300 : P.x, pz = at ? at.y - 300 : P.z;
+    g.position.set(px, 0, pz); g.rotation.y = yaw;
+    particles(V(px, 1, pz), { color: '#d9dde2', n: 12, speed: 2, up: 1.5, size: 0.35, life: 0.7, gravity: -0.5, solid: true, grow: 2 });
+    const c = { g, yaw, pos: { x: px, z: pz }, alive: true };
     g.userData.cloneRef = c;
     scene.add(g); dyn.clones.push(c);
     if (xrayOn) setXrayLook(g, true, decoyMat);
@@ -790,25 +791,25 @@
   }
 
   /* 능력 이펙트 */
-  const feet = () => V(P.x, P.y + 0.08, P.z);
-  function trail(fromMap, color) { // 순간이동·돌진 잔상
-    const a = mapV(fromMap.x, 1.0, fromMap.y), b = V(P.x, P.y + 1.0, P.z);
+  const feet = at => at ? mapV(at.x, 0.08, at.y) : V(P.x, P.y + 0.08, P.z);
+  function trail(fromMap, color, toMap) { // 순간이동·돌진 잔상 (toMap 없으면 내 위치까지)
+    const a = mapV(fromMap.x, 1.0, fromMap.y), b = toMap ? mapV(toMap.x, 1.0, toMap.y) : V(P.x, P.y + 1.0, P.z);
     for (let i = 0; i <= 10; i++) particles(a.clone().lerp(b, i / 10), { color, n: 3, speed: 0.8, up: 0.6, size: 0.1, life: 0.6, gravity: -1 });
     const m = fxMat(color, 0.5);
     const bm = beam(a, b, 0.5, m);
     addFx(bm, 0.35, k => { m.opacity = 0.5 * (1 - k); bm.scale.x = bm.scale.y = 1 - k; });
   }
-  function burstAtPlayer(color, r = 4) {
-    ring(feet(), { color, r1: r, life: 0.5 });
-    particles(V(P.x, P.y + 0.3, P.z), { color, n: 18, speed: r * 1.2, up: 3, size: 0.09, life: 0.6 });
+  function burstAtPlayer(color, r = 4, at) {
+    ring(feet(at), { color, r1: r, life: 0.5 });
+    particles(at ? mapV(at.x, 0.3, at.y) : V(P.x, P.y + 0.3, P.z), { color, n: 18, speed: r * 1.2, up: 3, size: 0.09, life: 0.6 });
   }
-  function slamImpact(r, color) {
-    const p = feet();
+  function slamImpact(r, color, at) {
+    const p = feet(at);
     ring(p, { color, r1: r * 1.3, life: 0.6, thick: 0.25 });
     ring(p, { color: '#ffffff', r1: r * 0.8, life: 0.35 });
     orb(p, { color, r0: 0.5, r1: r * 0.6, life: 0.35, opacity: 0.6 });
     particles(p, { color: '#6d5a42', n: 22, speed: r * 1.5, up: 6, size: 0.16, life: 0.9, gravity: 14, solid: true });
-    shake(0.7); fovKick(0.12);
+    if (at) shakeFrom(p, 0.7, r * 3); else { shake(0.7); fovKick(0.12); }
   }
   // 번개: 지그재그 막대 여러 개, 깜빡이며 사라짐 (섬 좌표 {x, h, y})
   function lightning(a, b, color = '#8fdcff') {
@@ -904,6 +905,7 @@
   LF.world3d = {
     init, reset, applySettings, render, islandPath, islandR, roads: ROADS, get lootSpots() { return lootSpots; },
     findFree, setPlayer, look, endFreelook: () => { P.fl = 0; }, stepPlayer, blink, playerMap, facing, eyePos, highJump: v => { P.vy = v; P.onGround = false; },
+    push(dx, dy) { moveCircle(P, dx, dy, P.y); },
     dash(dist, speed) { P.dash = { dx: -Math.sin(P.yaw), dz: -Math.cos(P.yaw), left: dist, speed }; }, get dashing() { return !!P.dash; },
     get onGround() { return P.onGround; }, get yaw() { return P.yaw; }, getPos: () => ({ x: P.x, z: P.z }), setPos: (mx, my) => { P.x = mx - 300; P.z = my - 300; },
     shoot, los, addBot, poseBot, botFire, killBot, removeBot, setXray, moveCircle: (p, dx, dz) => moveCircle(p, dx, dz), freeAt: (mx, my, r) => freeAt(mx - 300, my - 300, r),

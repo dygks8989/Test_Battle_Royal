@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>라스트 파이브</title>
-  <link rel="stylesheet" href="css/base.css?v=5">
-  <link rel="stylesheet" href="css/screens.css?v=5">
-  <link rel="stylesheet" href="css/hud.css?v=5">
+  <link rel="stylesheet" href="css/base.css?v=10">
+  <link rel="stylesheet" href="css/screens.css?v=10">
+  <link rel="stylesheet" href="css/hud.css?v=10">
 </head>
 <body>
 
@@ -31,21 +31,22 @@
       <div class="hero-actions">
         <button class="btn btn-primary btn-lg" id="quickJoin">빠른 입장</button>
         <button class="btn btn-lg" id="createRoom">방 만들기</button>
+        <button class="btn btn-lg btn-ghost" id="soloPlay">혼자 연습 (봇)</button>
       </div>
     </div>
 
     <div class="panel room-list-panel">
       <div class="panel-head">
-        <h2>공개 방 목록 <span class="muted" id="roomCount"></span></h2>
+        <h2>공개 방 목록 <span class="muted" id="roomCount"></span> <span class="net-status" id="netStatus">연결 중…</span></h2>
         <div class="panel-tools">
           <input id="roomSearch" type="search" placeholder="방 이름 검색">
           <label class="check"><input type="checkbox" id="onlyWaiting"> 대기 중만</label>
-          <button class="btn btn-sm" id="refreshRooms">↻ 새로고침</button>
+          <button class="btn btn-sm" id="refreshRooms" title="목록은 실시간으로 갱신돼요">↻ 새로고침</button>
         </div>
       </div>
       <div class="table-wrap">
         <table class="room-table">
-          <thead><tr><th>방 이름</th><th>방장</th><th>인원</th><th>상태</th><th>핑</th><th></th></tr></thead>
+          <thead><tr><th>방 이름</th><th>방장</th><th>인원</th><th>상태</th><th></th></tr></thead>
           <tbody id="roomRows"></tbody>
         </table>
       </div>
@@ -257,16 +258,19 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="js/data.js?v=5"></script>
-<script src="js/core.js?v=5"></script>
-<script src="js/character.js?v=5"></script>
-<script src="js/settings.js?v=5"></script>
-<script src="js/lobby.js?v=5"></script>
-<script src="js/room.js?v=5"></script>
-<script src="js/custom.js?v=5"></script>
-<script src="js/world3d.js?v=5"></script>
-<script src="js/hud.js?v=5"></script>
-<script src="js/result.js?v=5"></script>
-<script src="js/app.js?v=5"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js?v=10"></script>
+<script src="js/data.js?v=10"></script>
+<script src="js/core.js?v=10"></script>
+<script src="js/net.js?v=10"></script>
+<script src="js/character.js?v=10"></script>
+<script src="js/settings.js?v=10"></script>
+<script src="js/lobby.js?v=10"></script>
+<script src="js/room.js?v=10"></script>
+<script src="js/custom.js?v=10"></script>
+<script src="js/world3d.js?v=10"></script>
+<script src="js/hud.js?v=10"></script>
+<script src="js/result.js?v=10"></script>
+<script src="js/app.js?v=10"></script>
 </body>
 </html>

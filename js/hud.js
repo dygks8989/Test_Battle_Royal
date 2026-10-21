@@ -7,6 +7,14 @@
   const WD = LF.world3d;
   const now = () => performance.now() / 1000;
   const P0 = Object.keys(AB).filter(id => AB[id].p === 0);
+  const N = LF.net;
+  // 온라인에서는 방장이 준 시드로 모두 같은 스폰 구역·아이템·자기장을 만듦 (혼자 연습은 Math.random)
+  let RNG = Math.random;
+  const sr = (a, b) => a + RNG() * (b - a);
+  const sp = arr => arr[Math.floor(RNG() * arr.length)];
+  const r1 = v => Math.round(v * 10) / 10;
+  function sshuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(RNG() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function seeded(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   const PREP = 10, TICKET_CAST = 1.0, SWAP_TIME = 8, MEDKIT_CAST = 3, MAX_TICKETS = 3;
   const SPREAD = { 맨손: 0, 권총: 1.0, 기관단총: 1.2, 돌격소총: 0.8, 경기관총: 1.1, 산탄총: 0, 지정사수소총: 0.25, 저격총: 0.1, 근접: 0 }; // 기본 퍼짐(도)
   const TH = D.throwables, THROW_KINDS = Object.keys(TH), THROW_CD = 0.9;
@@ -16,8 +24,9 @@
   const held = new Set();
 
   const chat = createChat($('#hudChat'), {
-    onSend() {
+    onSend(text) {
       if (G && G.dead && !G.deadChatNoted) { chat.add(null, '죽은 플레이어의 채팅은 생존자에게 보이지 않아요.', 'sys'); G.deadChatNoted = true; }
+      if (G && G.online) netEv({ k: 'chat', name: store.get('nickname'), text, dead: G.dead ? 1 : 0 }, true);
       chat.input.blur();
     }
   });
@@ -140,8 +149,8 @@
     const z = G.zone, ph = D.zonePhases[i], nr = ph.to / 2;
     z.idx = i; z.state = 'wait'; z.t = 0; z.dur = ph.wait;
     let x, y;
-    if (i === 0) { const a = rand(0, Math.PI * 2), d = rand(0, 200); x = clamp(300 + Math.cos(a) * d, nr, 600 - nr); y = clamp(300 + Math.sin(a) * d, nr, 600 - nr); }
-    else { const a = rand(0, Math.PI * 2), d = rand(0, Math.max(0, z.cur.r - nr)); x = z.cur.x + Math.cos(a) * d; y = z.cur.y + Math.sin(a) * d; }
+    if (i === 0) { const a = sr(0, Math.PI * 2), d = sr(0, 200); x = clamp(300 + Math.cos(a) * d, nr, 600 - nr); y = clamp(300 + Math.sin(a) * d, nr, 600 - nr); }
+    else { const a = sr(0, Math.PI * 2), d = sr(0, Math.max(0, z.cur.r - nr)); x = z.cur.x + Math.cos(a) * d; y = z.cur.y + Math.sin(a) * d; }
     z.next = { x, y, r: nr };
     if (i > 0) banner(`${i + 1}단계 안전구역이 표시됐어요`);
   }
@@ -171,43 +180,48 @@
   function assignZones(n) {
     const zs = D.spawnZones;
     for (let tries = 0; tries < 300; tries++) {
-      const z = shuffle(zs).slice(0, n);
+      const z = sshuffle(zs).slice(0, n);
       if (z.every((a, i) => z.every((b, j) => i === j || Math.hypot(a.x - b.x, a.y - b.y) >= 150))) return z;
     }
-    return shuffle(zs).slice(0, n);
+    return sshuffle(zs).slice(0, n);
   }
 
   /* ================= 아이템 배치 (WEAPON 9장 스폰 확률) ================= */
   const GRADE_POOL = { common: ['p9', 'vx9', 'sg12', 'machete'], normal: ['r45', 'mk45', 'ar556', 'ak762'], rare: ['dm14', 'br300', 'sv98', 'lm60'], legend: ['amr50'] };
   function rollWeapon(central) {
-    const r = Math.random();
-    if (central && r < 0.03) return pick(GRADE_POOL.legend); // 대물 저격총은 중앙에만, 아주 드물게
-    if (central && r < 0.15) return pick(GRADE_POOL.rare);   // 희귀 무기는 중앙 위험 지역에 많이
-    if (!central && r < 0.05) return pick(['sv98', 'dm14']);
-    return pick(r < 0.6 ? GRADE_POOL.common : GRADE_POOL.normal);
+    const r = RNG();
+    if (central && r < 0.03) return sp(GRADE_POOL.legend); // 대물 저격총은 중앙에만, 아주 드물게
+    if (central && r < 0.15) return sp(GRADE_POOL.rare);   // 희귀 무기는 중앙 위험 지역에 많이
+    if (!central && r < 0.05) return sp(['sv98', 'dm14']);
+    return sp(r < 0.6 ? GRADE_POOL.common : GRADE_POOL.normal);
   }
   function rollLoot(central) {
-    const r = Math.random();
+    const r = RNG();
     if (r < 0.30) return { kind: 'weapon', id: rollWeapon(central) };
-    if (r < 0.50) return { kind: 'ammo', id: pick(['light', 'light', 'rifle', 'rifle', 'shell', 'sniper']) };
-    if (r < 0.62) return { kind: 'armor', slot: pick(['vest', 'helmet']), lv: Math.random() < 0.7 ? 1 : 2 };
+    if (r < 0.50) return { kind: 'ammo', id: sp(['light', 'light', 'rifle', 'rifle', 'shell', 'sniper']) };
+    if (r < 0.62) return { kind: 'armor', slot: sp(['vest', 'helmet']), lv: RNG() < 0.7 ? 1 : 2 };
     if (r < 0.71) return { kind: 'medkit' };
-    if (r < 0.83) { const t = Math.random(); return { kind: 'throw', id: t < 0.45 ? 'frag' : t < 0.75 ? 'smoke' : 'flash' }; }
-    if (r < 0.90) { const t = Math.random(); return { kind: 'scope', lv: t < 0.55 ? 2 : t < 0.88 || !central ? 4 : 8 }; } // 8배율은 중앙에만
-    return central ? { kind: 'ticket' } : { kind: 'ammo', id: pick(['light', 'rifle']) }; // 티켓은 중앙 쪽에 많이
+    if (r < 0.83) { const t = RNG(); return { kind: 'throw', id: t < 0.45 ? 'frag' : t < 0.75 ? 'smoke' : 'flash' }; }
+    if (r < 0.90) { const t = RNG(); return { kind: 'scope', lv: t < 0.55 ? 2 : t < 0.88 || !central ? 4 : 8 }; } // 8배율은 중앙에만
+    return central ? { kind: 'ticket' } : { kind: 'ammo', id: sp(['light', 'rifle']) }; // 티켓은 중앙 쪽에 많이
   }
-  function putItem(loot, mx, my) { G.items.push({ loot, mx, my, mesh: WD.addItem(loot.kind, mx, my) }); }
+  // iid: 아이템 번호 — 처음 배치는 순서대로(모두 같음), 떨어뜨린 건 '<내 id>-<n>'
+  function putItem(loot, mx, my, iid) {
+    iid = iid || 'i' + (G.itemSeq++);
+    if (G.items.some(x => x.iid === iid)) return;
+    G.items.push({ iid, loot, mx, my, mesh: WD.addItem(loot.kind, mx, my) });
+  }
   function placeLoot(zones) {
     const firstOfZone = new Set();
     WD.lootSpots.forEach(s => {
       const zoneHere = zones.find(z => Math.hypot(z.x - s.mx, z.y - s.my) < 45);
       // 스폰 구역 건물에는 권총·기관단총·산탄총 중 하나가 반드시 (30초 안에 첫 무기)
-      if (zoneHere && !firstOfZone.has(zoneHere.name)) { firstOfZone.add(zoneHere.name); putItem({ kind: 'weapon', id: pick(['p9', 'vx9', 'sg12']) }, s.mx, s.my); return; }
+      if (zoneHere && !firstOfZone.has(zoneHere.name)) { firstOfZone.add(zoneHere.name); putItem({ kind: 'weapon', id: sp(['p9', 'vx9', 'sg12']) }, s.mx, s.my); return; }
       putItem(rollLoot(Math.hypot(s.mx - 300, s.my - 300) < 150), s.mx, s.my);
     });
     zones.forEach(z => {
-      const [wx, wy] = WD.findFree(z.x + rand(-6, 6), z.y + rand(-6, 6));
-      putItem({ kind: 'weapon', id: pick(['p9', 'vx9', 'sg12']) }, wx, wy);
+      const [wx, wy] = WD.findFree(z.x + sr(-6, 6), z.y + sr(-6, 6));
+      putItem({ kind: 'weapon', id: sp(['p9', 'vx9', 'sg12']) }, wx, wy);
       const [ax, ay] = WD.findFree(wx + 2, wy + 1.5);
       putItem({ kind: 'ammo', id: 'light' }, ax, ay);
     });
@@ -218,6 +232,8 @@
     WD.init(canvas);
     WD.reset();
     const roster = session ? session.players : [{ id: 'me', name: store.get('nickname') || '나', me: true }];
+    const online = !!(session && session.online);
+    RNG = online ? seeded(session.seed) : Math.random;
     const zones = assignZones(roster.length);
     const myZone = zones[roster.findIndex(p => p.me)];
     G = {
@@ -232,18 +248,24 @@
       crouch: false, aiming: false, firing: false, nextShot: 0, moving: false, sprinting: false, jumpReq: false,
       cast: null, lastHit: -99, hist: [], histT: 0, bots: {}, items: [], nearItem: null,
       botDeaths: [], dead: false, spectate: null, over: false, abilityUses: 0, turret: null, turretNext: 0,
-      timers: [], locked: false, everLocked: false, noLock: false, startT: now(), showHint: true
+      timers: [], locked: false, everLocked: false, noLock: false, startT: now(), showHint: true,
+      online, itemSeq: 0, dropSeq: 0, net: { q: [], last: 0, urgent: false }, lastAtk: null, pending: new Set(), rturrets: {}
     };
     roster.forEach((p, i) => {
       const z = zones[i];
-      const [x, y] = WD.findFree(z.x + rand(-10, 10), z.y + rand(-10, 10));
+      const [x, y] = WD.findFree(z.x + sr(-10, 10), z.y + sr(-10, 10));
       if (p.me) { WD.setPlayer(x, y, Math.atan2(300 - y, 300 - x)); return; }
+      if (online) { // 다른 사람: 위치는 그 사람이 보내는 패킷으로 움직임 (처음 자리는 같은 시드라 미리 앎)
+        G.bots[p.id] = { id: p.id, name: p.name, remote: true, hp: 100, vest: 0, helmet: 0, x, y, h: 0, yaw: 0, tx: x, ty: y, th: 0, tyaw: 0, vx: 0, vy: 0, lastT: now(), moving: false };
+        WD.addBot(p.id, D.palette[p.outfit && p.outfit.top ? p.outfit.top[1] : 0] || pick(D.palette), x, y);
+        return;
+      }
       G.bots[p.id] = { id: p.id, name: p.name, hp: 100, vest: randInt(0, 1), helmet: randInt(0, 1), x, y, yaw: 0, tx: x, ty: y, nextThink: 0, nextShot: 0, stuck: 0, alertUntil: 0, target: null };
       WD.addBot(p.id, pick(D.palette), x, y);
     });
     placeLoot(zones);
     // 다른 플레이어끼리의 교전(멀리서 일어남) — 마지막 단계 전에 정리
-    const ids = Object.keys(G.bots);
+    const ids = Object.keys(G.bots).filter(id => !G.bots[id].remote);
     const times = ids.map(() => rand(60, 480)).sort((a, b) => a - b);
     G.botDeaths = shuffle(ids).map((id, i) => ({ id, t: times[i] }));
     G.pos = WD.playerMap(); G.facing = WD.facing();
@@ -254,6 +276,8 @@
     $('#killfeed').innerHTML = '';
     chat.clear();
     chat.add(null, `${myZone.name}에 스폰했어요. 10초 준비 단계에는 이동과 티켓 사용만 가능해요.`, 'sys');
+    if (online) chat.add(null, `온라인 대전 — ${roster.length}명이 같은 섬에 있어요. 채팅은 모두에게 보여요.`, 'sys');
+    $('#demo').hidden = online; // 온라인에서는 데모(치트) 패널 숨김
     ['invOverlay', 'mapOverlay', 'menuOverlay', 'deathOverlay', 'roulette', 'swap', 'clickHint'].forEach(id => { $('#' + id).hidden = true; });
     $('#fxLayer').innerHTML = '';
     $('#demo').classList.remove('open');
@@ -282,6 +306,7 @@
       if (!G.dead) { zoneDamage(dt); regen(dt); recordHist(dt); nearItem(); turretStep(t); chargeStep(t); slamStep(t); }
       botsStep(dt, t);
       botDeaths();
+      netStep(t);
       castStep(t);
       rechargeStep(t);
       swapStep(t);
@@ -349,8 +374,9 @@
     if (source !== '자기장') G.lastHit = now();
     if (G.hp <= 0) { G.hp = 0; die(source); }
   }
-  function takeShot(base, part, attacker, from) {
-    let dmg = base * (part === 'head' ? 2 : part === 'limb' ? 0.8 : 1);
+  // raw: 부위 배율이 이미 들어간 피해 (다른 플레이어가 보낸 명중)
+  function takeShot(base, part, attacker, from, raw) {
+    let dmg = raw ? base : base * (part === 'head' ? 2 : part === 'limb' ? 0.8 : 1);
     const armor = part === 'head' ? G.helmet : part === 'body' ? G.vest : 0;
     dmg *= 1 - D.armorReduce[armor];
     if (part !== 'head' && has('iron_skin')) { dmg *= 0.9; proc('iron_skin', `피해 −${Math.max(1, Math.round(dmg / 9))}`); }
@@ -369,6 +395,7 @@
     const z = G.zone, eye = WD.eyePos();
     Object.values(G.bots).forEach(b => {
       if (!isAlive(b.id)) return;
+      if (b.remote) { remoteStep(b, dt); return; }
       let moving = false;
       if (!isPrep()) {
         if (t < (b.blindUntil || 0)) b.target = null; // 섬광탄에 눈이 멀면 쏘지 못하고 헤맴
@@ -417,10 +444,29 @@
       WD.poseBot(b.id, b.x, b.y, b.yaw, moving);
     });
   }
+  // 다른 플레이어: 마지막 패킷 위치 + 속도로 조금 앞을 예측하고 부드럽게 따라감
+  function remoteStep(b, dt) {
+    const ahead = Math.min(0.3, now() - b.lastT), k = Math.min(1, dt * 12);
+    const tx = b.tx + b.vx * ahead, ty = b.ty + b.vy * ahead;
+    b.x += (tx - b.x) * k; b.y += (ty - b.y) * k; b.h += (b.th - b.h) * k;
+    const dy = Math.atan2(Math.sin(b.tyaw - b.yaw), Math.cos(b.tyaw - b.yaw));
+    b.yaw += dy * Math.min(1, dt * 15);
+    WD.poseBot(b.id, b.x, b.y, b.yaw, b.moving, b.h);
+  }
   // pt: 맞은 지점(섬 좌표 {x, h, y}) — 피해 숫자를 띄울 위치. 없으면 봇 머리 위
   function damageBot(id, dmg, head, source, viaAbility, pt) {
     const b = G.bots[id]; if (!b || !isAlive(id)) return;
+    // 다른 사람: 판정은 쏜 쪽이 하고, 맞은 사람이 자기 방어구를 적용해 체력을 깎음 (클라이언트 판정 — 실제 게임은 서버가 함)
+    if (b.remote) netEv({ k: 'hit', to: id, d: r1(dmg), hd: head ? 1 : 0, src: source, via: viaAbility ? 1 : 0 }, true);
     dmg *= 1 - D.armorReduce[head ? b.helmet : b.vest];
+    if (b.remote) {
+      const hm = $('#hitmarker');
+      hm.className = 'hitmarker'; void hm.offsetWidth; hm.className = 'hitmarker show' + (head ? ' head' : '');
+      dmgNumber(pt || { x: b.x, h: 1.9, y: b.y }, dmg, head, b.hp - dmg <= 0);
+      me().damage += dmg;
+      if (!viaAbility && has('vampire') && G.hp < 100) { G.hp = Math.min(100, G.hp + dmg * 0.15); proc('vampire', `+${Math.round(dmg * 0.15)} 회복`); }
+      return;
+    }
     b.hp -= dmg;
     b.alertUntil = now() + 4;
     const hm = $('#hitmarker');
@@ -486,6 +532,7 @@
     if (w.family === '저격총') WD.fovKick(0.03);
     for (let i = 0; i < pellets; i++) {
       const hit = WD.shoot(cone * Math.PI / 180, w.mode === 'melee' ? w.range : 600, tracer);
+      if (i === 0 && tracer && hit) netEv({ k: 'shot', b: [r1(hit.point.x + 300), r1(hit.point.y), r1(hit.point.z + 300)] });
       if (!hit || !hit.botId) continue;
       let fall = 1; // 거리 감쇠 (WEAPON 3장)
       if (hit.dist > w.range) {
@@ -538,8 +585,9 @@
       if (d < r && WD.los(p.x, p.h + 0.4, p.y, e.x, e.y - 0.6, e.z)) takeShot(base * (1 - 0.75 * d / r), 'body', '내 수류탄', p);
     }
   }
-  function knock(b, from, dist) { // 봇 밀쳐내기
+  function knock(b, from, dist) { // 봇 밀쳐내기 (다른 사람이면 밀려나라고 알림)
     const dx = b.x - from.x, dy = b.y - from.y, len = Math.hypot(dx, dy) || 1;
+    if (b.remote) { netEv({ k: 'push', to: b.id, dx: r1(dx / len * dist), dy: r1(dy / len * dist) }, true); return; }
     const q = { x: b.x - 300, z: b.y - 300 };
     WD.moveCircle(q, dx / len * dist, dy / len * dist);
     b.x = q.x + 300; b.y = q.z + 300;
@@ -547,15 +595,22 @@
   function detonate(kind, p) {
     if (!G || G.over) return;
     const t = TH[kind];
-    if (kind === 'frag') { WD.explosion(p.x, p.h, p.y, t.radius); blast(p, t.radius, t.dmg, '수류탄', false, true); }
-    else if (kind === 'smoke') WD.addSmoke(p.x, p.y, t.radius, t.dur);
+    if (kind === 'frag') { WD.explosion(p.x, p.h, p.y, t.radius); fx('exp', { x: r1(p.x), h: r1(p.h), y: r1(p.y), r: t.radius }); blast(p, t.radius, t.dmg, '수류탄', false, true); }
+    else if (kind === 'smoke') { WD.addSmoke(p.x, p.y, t.radius, t.dur); fx('smoke', { x: r1(p.x), y: r1(p.y), r: t.radius, d: t.dur }); }
     else if (kind === 'flash') {
       WD.flashBurst(p.x, p.h, p.y);
+      fx('flash', { x: r1(p.x), h: r1(p.h), y: r1(p.y) });
       Object.values(G.bots).forEach(b => {
         const d = Math.hypot(b.x - p.x, b.y - p.y);
         if (isAlive(b.id) && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, b.x, 1.6, b.y)) { b.blindUntil = now() + t.blind * (1 - 0.5 * d / t.radius); b.target = null; }
       });
-      // 나도 보고 있었으면 눈이 멂 (등지고 있으면 약하게)
+      flashMe(p);
+    }
+  }
+  // 섬광을 보고 있었으면 눈이 멂 (등지고 있으면 약하게) — 다른 사람이 던진 섬광에도 씀
+  function flashMe(p) {
+    const t = TH.flash;
+    {
       const e = WD.eyePos(), d = Math.hypot(G.pos.x - p.x, G.pos.y - p.y);
       if (!G.dead && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, e.x, e.y, e.z)) {
         const a = WD.aimDir(), v = { x: p.x - e.x, h: p.h - e.y, y: p.y - e.z }, len = Math.hypot(v.x, v.h, v.y) || 1;
@@ -781,7 +836,7 @@
       WD.ring(b.x, b.y, { color: '#ffb347', r1: 2.5, life: 0.35 });
       damageBot(b.id, 40, false, 'charge', true);
     });
-    if (!WD.dashing || t > c.until) { WD.trail(c.from, '#ffb347'); G.charge = null; }
+    if (!WD.dashing || t > c.until) { WD.trail(c.from, '#ffb347'); fx('trail', { a: c.from, b: G.pos, c: '#ffb347' }); G.charge = null; }
   }
   function slamStep(t) {
     const s = G.slam;
@@ -791,6 +846,7 @@
     if (!s.down || !WD.onGround) return;
     G.slam = null;
     WD.slamImpact(6, '#ffb347');
+    fx('slam', { x: r1(G.pos.x), y: r1(G.pos.y), r: 6 });
     flash('fx-slam', 350);
     Object.values(G.bots).forEach(b => {
       const d = Math.hypot(b.x - G.pos.x, b.y - G.pos.y);
@@ -800,11 +856,11 @@
     });
   }
   const EFFECTS = {
-    blink_dash() { const from = G.pos; WD.blink(10); WD.trail(from, '#7fd4ff'); WD.fovKick(0.14); flash('fx-blink', 450); },
-    high_jump() { WD.highJump(Math.sqrt(2 * 22 * 12)); WD.burstAtPlayer('#9fe870', 5); WD.fovKick(0.08); flash('fx-jump', 400); },
+    blink_dash() { const from = G.pos; WD.blink(10); WD.trail(from, '#7fd4ff'); fx('trail', { a: from, b: WD.playerMap(), c: '#7fd4ff' }); WD.fovKick(0.14); flash('fx-blink', 450); },
+    high_jump() { WD.highJump(Math.sqrt(2 * 22 * 12)); WD.burstAtPlayer('#9fe870', 5); fx('burst', { x: r1(G.pos.x), y: r1(G.pos.y), c: '#9fe870', r: 5 }); WD.fovKick(0.08); flash('fx-jump', 400); },
     charge() {
       G.charge = { from: G.pos, hit: new Set(), until: now() + 0.8 };
-      WD.dash(12, 32); WD.fovKick(0.25); WD.burstAtPlayer('#ffb347', 2.5);
+      WD.dash(12, 32); WD.fovKick(0.25); WD.burstAtPlayer('#ffb347', 2.5); fx('burst', { x: r1(G.pos.x), y: r1(G.pos.y), c: '#ffb347', r: 2.5 });
       flash('fx-charge', 550);
     },
     ground_slam() {
@@ -816,6 +872,7 @@
       const first = lightningTarget(); if (!first) return;
       const e = WD.eyePos();
       WD.lightning({ x: e.x, h: e.y - 0.35, y: e.z }, { x: first.x, h: 1.3, y: first.y });
+      fx('zap', { a: { x: r1(e.x), h: r1(e.y - 0.35), y: r1(e.z) }, b: { x: r1(first.x), h: 1.3, y: r1(first.y) } });
       flash('fx-zap', 300);
       damageBot(first.id, 35, false, 'chain_lightning', true);
       // 주변 12m 적 2명에게 차례로 튐
@@ -827,6 +884,7 @@
         if (!next) return;
         hit.add(next.id);
         WD.lightning({ x: from.x, h: 1.3, y: from.y }, { x: next.x, h: 1.3, y: next.y });
+        fx('zap', { a: { x: r1(from.x), h: 1.3, y: r1(from.y) }, b: { x: r1(next.x), h: 1.3, y: r1(next.y) } });
         damageBot(next.id, 20, false, 'chain_lightning', true);
         from = next;
       }, n * 140));
@@ -834,32 +892,36 @@
     meteor() {
       const p = WD.aimPoint(45);
       flash('fx-meteor', 600);
+      fx('meteor', { x: r1(p.x), y: r1(p.y), r: 8, dl: 1.2 });
       WD.meteor(p.x, p.y, 8, 1.2, () => {
         if (!G || G.over) return;
         blast({ x: p.x, h: 0.5, y: p.y }, 8, 90, 'meteor', true, false);
         if (!G.dead && Math.hypot(G.pos.x - p.x, G.pos.y - p.y) < 14) flash('fx-slam', 350);
       });
     },
-    barrier(a) { const h = WD.addBarrier(); later(() => h.remove(), a.dur * 1000); },
+    barrier(a) { const h = WD.addBarrier(); fx('barrier', { x: r1(h.at.x), y: r1(h.at.y), yaw: Math.round(h.at.yaw * 100) / 100, d: a.dur }); later(() => h.remove(), a.dur * 1000); },
     clone(a) {
       const color = D.palette[store.get('outfit').top[1]];
       [Math.PI / 4, -Math.PI / 4].forEach(off => { const c = WD.addClone(color, off); later(() => { if (c.alive) WD.removeClone(c); }, a.dur * 1000); });
+      fx('clone', { x: r1(G.pos.x), y: r1(G.pos.y), yaw: Math.round(WD.yaw * 100) / 100, c: color, d: a.dur });
       toast('분신 2개 생성');
     },
     turret(a) {
       const h = WD.addTurret();
       G.turret = { h };
+      fx('turret', { x: r1(h.mx), y: r1(h.my), d: a.dur });
       G.turretNext = now() + 1.0; // 설치 1초
       later(() => { h.remove(); G.turret = null; }, a.dur * 1000);
     },
     xray(a) {
       WD.setXray(true); flash('fx-xray-tint', a.dur * 1000); later(() => WD.setXray(false), a.dur * 1000);
+      fx('xray', { x: r1(G.pos.x), y: r1(G.pos.y) });
       WD.pulse({ color: '#ff4d40', r0: 1, r1: 50, life: 1.0, thick: 0.03, opacity: 0.9 }); // 반경 50m로 퍼지는 탐지파
       later(() => WD.pulse({ color: '#ff8a80', r0: 1, r1: 50, life: 1.0, thick: 0.02, opacity: 0.6 }), 200);
     },
     rewind() {
       const snap = G.hist[0], from = G.pos;
-      if (snap) { G.hp = Math.max(G.hp, snap.hp); G.mags = snap.mag.slice(); WD.setPos(snap.pos.x, snap.pos.y); WD.trail(from, '#b48cff'); }
+      if (snap) { G.hp = Math.max(G.hp, snap.hp); G.mags = snap.mag.slice(); WD.setPos(snap.pos.x, snap.pos.y); WD.trail(from, '#b48cff'); fx('trail', { a: from, b: snap.pos, c: '#b48cff' }); }
       WD.burstAtPlayer('#b48cff', 3);
       flash('fx-rewind', 900);
       renderWeapons();
@@ -874,9 +936,106 @@
       .find(x => WD.los(tp.mx, 1.0, tp.my, x.b.x, 1.3, x.b.y));
     if (!tgt) return;
     tp.aim(tgt.b.x, tgt.b.y);
-    WD.turretShot(tp, tgt.b.x + (Math.random() < 0.35 ? 0 : rand(-1, 1)), tgt.b.y + rand(-0.4, 0.4));
+    const sx = tgt.b.x + (Math.random() < 0.35 ? 0 : rand(-1, 1)), sy = tgt.b.y + rand(-0.4, 0.4);
+    WD.turretShot(tp, sx, sy);
+    fx('tshot', { tx: r1(sx), ty: r1(sy) });
     if (Math.random() < 0.35) damageBot(tgt.b.id, 7, false, 'turret', true);
   }
+
+  /* ================= 온라인 동기화 (net.js 방 채널) =================
+     - 각자 자기 상태(위치·체력·장비)를 초당 약 4.5번 보내고, 그사이 생긴 일(명중·사망·아이템·이펙트)을 같이 실어 보냄
+     - 명중 판정은 쏜 쪽, 체력 계산은 맞은 쪽, 아이템 줍기는 중재자(arbiter)가 정함 — 실제 게임은 서버가 모두 판정 */
+  function netEv(e, urgent) {
+    if (!G || !G.online) return;
+    G.net.q.push(e);
+    if (urgent) G.net.urgent = true;
+  }
+  const fx = (kind, data) => netEv(Object.assign({ k: 'fx', fx: kind }, data));
+  function netStep(t) {
+    if (!G.online) return;
+    const n = G.net, gap = t - n.last;
+    if (gap < LF.config.tickMs / 1000 && !(n.urgent && gap >= 0.12)) return;
+    if (G.dead && !n.q.length && gap < 1) return; // 죽은 뒤에는 알릴 일이 있을 때만
+    n.last = t; n.urgent = false;
+    const e = WD.eyePos(), m = me();
+    const pkt = { s: G.dead ? null : {
+      x: Math.round(G.pos.x * 100) / 100, y: Math.round(G.pos.y * 100) / 100, h: r1(Math.max(0, e.y - (G.crouch ? 1.1 : 1.65))),
+      yaw: Math.round(WD.yaw * 100) / 100, m: G.moving ? 1 : 0, hp: Math.ceil(G.hp), hv: G.helmet, vs: G.vest,
+      dmg: Math.round(m.damage), ab: G.everOwned
+    } };
+    if (n.q.length) { pkt.e = n.q; n.q = []; }
+    N.roomSend('g', pkt);
+  }
+  function onPacket(m) {
+    if (!G || !G.online || !G.bots[m.f]) return;
+    const b = G.bots[m.f], t = now(), p = G.players.find(x => x.id === m.f);
+    if (m.s) {
+      const s = m.s, dt = Math.max(0.05, t - b.lastT);
+      const jump = Math.hypot(s.x - b.tx, s.y - b.ty);
+      b.vx = jump > 6 ? 0 : (s.x - b.tx) / dt; b.vy = jump > 6 ? 0 : (s.y - b.ty) / dt;
+      if (jump > 6 || Math.hypot(s.x - b.x, s.y - b.y) > 12) { b.x = s.x; b.y = s.y; } // 순간이동·되감기는 바로 옮김
+      b.tx = s.x; b.ty = s.y; b.th = s.h; b.tyaw = s.yaw; b.moving = !!s.m; b.lastT = t;
+      b.hp = s.hp; b.helmet = s.hv; b.vest = s.vs;
+      if (p) { p.damage = s.dmg; p.abilities = s.ab || []; }
+    }
+    (m.e || []).forEach(e => { try { onEvent(e, m.f, b, p); } catch (err) { console.error(err); } });
+  }
+  function onEvent(e, from, b, p) {
+    const mine = e.to === N.myId;
+    switch (e.k) {
+      case 'hit': if (mine) onHit(e, from); break;
+      case 'push': if (mine && !G.dead) WD.push(e.dx, e.dy); break;
+      case 'death': kill(from, e.by, e.src, !!e.via); break;
+      case 'shot': if (isAlive(from)) WD.botFire(from, e.b[0], e.b[1], e.b[2], true); break;
+      case 'fx': applyFx(e, from); break;
+      case 'drop': putItem(e.loot, e.x, e.y, e.iid); break;
+      case 'pick': { const it = G.items.find(x => x.iid === e.iid); G.pending.delete(e.iid); if (it) takeItem(it, e.by === N.myId); break; }
+      case 'pickReq': { // 내가 중재자일 때만 허락
+        if (arbiter() !== N.myId) break;
+        const it = G.items.find(x => x.iid === e.iid);
+        if (!it) break;
+        netEv({ k: 'pick', iid: e.iid, by: from }, true);
+        takeItem(it, false);
+        break;
+      }
+      case 'chat':
+        if (e.dead && !G.dead) break; // 죽은 사람의 채팅은 생존자에게 안 보임
+        chat.add(e.name, e.text);
+        break;
+    }
+  }
+  function onHit(e, from) {
+    if (G.dead || G.over) return;
+    const att = G.bots[from];
+    G.lastAtk = { id: from, src: e.src, via: !!e.via, t: now() };
+    takeShot(e.d, e.hd ? 'head' : 'body', att ? att.name : '적', att ? { x: att.x, y: att.y } : null, true);
+  }
+  function applyFx(e, from) {
+    const at = { x: e.x, y: e.y, yaw: e.yaw };
+    switch (e.fx) {
+      case 'exp': WD.explosion(e.x, e.h, e.y, e.r); break;
+      case 'smoke': WD.addSmoke(e.x, e.y, e.r, e.d); break;
+      case 'flash': WD.flashBurst(e.x, e.h, e.y); if (!G.dead) flashMe({ x: e.x, h: e.h, y: e.y }); break;
+      case 'trail': WD.trail(e.a, e.c, e.b); break;
+      case 'burst': WD.burstAtPlayer(e.c, e.r, at); break;
+      case 'slam': WD.slamImpact(e.r, '#ffb347', at); break;
+      case 'zap': WD.lightning(e.a, e.b); break;
+      case 'meteor': WD.meteor(e.x, e.y, e.r, e.dl, () => {}); break;
+      case 'barrier': { const h = WD.addBarrier(at); later(() => h.remove(), e.d * 1000); break; }
+      case 'turret': {
+        const h = WD.addTurret(at);
+        G.rturrets[from] = h;
+        later(() => { h.remove(); if (G.rturrets[from] === h) delete G.rturrets[from]; }, e.d * 1000);
+        break;
+      }
+      case 'tshot': { const h = G.rturrets[from]; if (h) { h.aim(e.tx, e.ty); WD.turretShot(h, e.tx, e.ty); } break; }
+      case 'clone': [Math.PI / 4, -Math.PI / 4].forEach(off => { const c = WD.addClone(e.c, off, at); later(() => { if (c.alive) WD.removeClone(c); }, e.d * 1000); }); break;
+      case 'xray': if (!G.dead && Math.hypot(G.pos.x - e.x, G.pos.y - e.y) < 50) toast('누군가 당신을 투시로 보고 있어요!', 'warn'); break;
+    }
+  }
+  N.on('msg:g', onPacket);
+  // 매치 중에 나간 사람은 그 자리에서 탈락 처리
+  N.on('left', id => { if (G && G.online && !G.over && G.bots[id] && isAlive(id)) kill(id, null, '연결 끊김'); });
 
   /* ================= 처치·사망 ================= */
   function kill(victimId, killerId, source, viaAbility) {
@@ -891,7 +1050,7 @@
     const b = G.bots[victimId];
     if (b) {
       WD.killBot(victimId);
-      if (Math.random() < 0.5) { const [x, y] = WD.findFree(b.x + 0.8, b.y, 0.4); putItem({ kind: 'ticket' }, x, y); } // 쓰지 않은 티켓이 떨어짐
+      if (!b.remote && Math.random() < 0.5) { const [x, y] = WD.findFree(b.x + 0.8, b.y, 0.4); putItem({ kind: 'ticket' }, x, y); } // 쓰지 않은 티켓이 떨어짐
     }
     if (k && k.me) {
       if (G.tickets < MAX_TICKETS) { G.tickets++; toast('처치 보상: 랜덤 능력 티켓 +1', 'ok'); }
@@ -936,7 +1095,12 @@
     m.alive = false;
     m.placement = alive().length + 1;
     const env = source === '자기장' || source === '내 수류탄'; // 쏜 사람이 없는 죽음
-    feed(env ? '자기장' : source, m.name, env ? source : 'AR-556', false, false, true);
+    const atk = !env && G.lastAtk && now() - G.lastAtk.t < 15 ? G.lastAtk : null;
+    feed(env ? '자기장' : source, m.name, env ? source : atk ? atk.src : 'AR-556', !!(atk && atk.via), false, true);
+    if (G.online) {
+      netEv({ k: 'death', by: atk ? atk.id : null, src: env ? source : atk ? atk.src : source, via: atk && atk.via ? 1 : 0 }, true);
+      if (G.tickets > 0) dropItem({ kind: 'ticket' }); // 쓰지 않은 티켓이 떨어짐
+    }
     $('#aliveCount').textContent = alive().length;
     G.swap = null; $('#swap').hidden = true; $('#roulette').hidden = true; $('#prompt').classList.remove('show');
     G.actives = [null, null]; G.passives = [null, null]; // 사망하면 능력 모두 사라짐
@@ -948,7 +1112,7 @@
       <p class="muted">처치 ${m.kills} · 데미지 ${Math.round(m.damage)}</p>
       <div class="death-actions"><button class="btn btn-lg" id="spectateBtn">관전하기</button><button class="btn btn-lg btn-primary" id="toResult">결과 보기</button></div></div>`;
     d.hidden = false;
-    $('#spectateBtn').onclick = () => { d.hidden = true; G.spectate = (alive()[0] || {}).id; WD.setMode('spectate', G.spectate); G.speed = 10; checkEnd(); };
+    $('#spectateBtn').onclick = () => { d.hidden = true; G.spectate = (alive()[0] || {}).id; WD.setMode('spectate', G.spectate); if (!G.online) G.speed = 10; checkEnd(); };
     $('#toResult').onclick = () => finish(false);
     checkEnd();
   }
@@ -963,7 +1127,7 @@
     G.over = true;
     unlock(true);
     alive().filter(p => !p.placement).forEach((p, i) => { p.placement = i + 1; });
-    G.players.forEach(p => {
+    if (!G.online) G.players.forEach(p => { // 봇 기록은 그럴듯하게 채움 (온라인은 각자 보낸 실제 값)
       if (!p.me && !p.abilities.length) p.abilities = shuffle(P0).slice(0, randInt(1, 4));
       if (!p.me && !p.damage) p.damage = p.kills * 100 + rand(20, 90);
     });
@@ -992,11 +1156,43 @@
     p.innerHTML = `<kbd>${esc(K('interact'))}</kbd> 줍기 <b>${esc(lootName(G.nearItem.loot))}</b>`;
     p.classList.add('show');
   }
-  function dropItem(loot) { const [x, y] = WD.findFree(G.pos.x + rand(-0.8, 0.8), G.pos.y + rand(-0.8, 0.8), 0.4); putItem(loot, x, y); }
+  function dropItem(loot) {
+    const [x, y] = WD.findFree(G.pos.x + rand(-0.8, 0.8), G.pos.y + rand(-0.8, 0.8), 0.4);
+    const iid = G.online ? `${N.myId}-${G.dropSeq++}` : null;
+    putItem(loot, x, y, iid);
+    if (G.online) netEv({ k: 'drop', iid, loot, x: r1(x), y: r1(y) }, true);
+  }
+  // 주울 수 없는 이유 (없으면 null)
+  function pickCheck(l) {
+    if (l.kind === 'ammo' && G.reserve[l.id] >= D.ammo[l.id].max) return `${D.ammo[l.id].name}은 최대 ${D.ammo[l.id].max}발까지 들 수 있어요`;
+    if (l.kind === 'armor' && G[l.slot] >= l.lv) return '이미 같거나 더 좋은 장비를 입고 있어요';
+    if (l.kind === 'medkit' && G.medkits >= 3) return '구급상자는 3개까지 들 수 있어요';
+    if (l.kind === 'ticket' && G.tickets >= MAX_TICKETS) return '티켓은 최대 3장까지 들 수 있어요';
+    if (l.kind === 'throw' && G.throws[l.id] >= throwMax(l.id)) return `${TH[l.id].name}은 ${throwMax(l.id)}개까지 들 수 있어요`;
+    if (l.kind === 'scope' && G.scopes.includes(l.lv)) return '이미 가진 스코프예요';
+    return null;
+  }
+  // 온라인에서 같은 아이템을 두 사람이 동시에 줍지 않도록, 접속 중인 참가자 중 아이디가 가장 앞선 사람이 줍기를 허락함
+  const arbiter = () => N.members.map(m => m.id).filter(id => G.players.some(p => p.id === id)).sort()[0] || N.myId;
   function pickup() {
     const it = G.nearItem;
     if (!it || G.dead) return;
+    const why = pickCheck(it.loot);
+    if (why) { hint(why); return; }
+    if (G.online && arbiter() !== N.myId) {
+      if (!G.pending.has(it.iid)) { G.pending.add(it.iid); netEv({ k: 'pickReq', iid: it.iid }, true); later(() => G.pending.delete(it.iid), 2000); }
+      return;
+    }
+    if (G.online) netEv({ k: 'pick', iid: it.iid, by: N.myId }, true);
+    takeItem(it, true);
+  }
+  function takeItem(it, mine) {
+    WD.removeItem(it.mesh);
+    G.items = G.items.filter(x => x !== it);
+    if (G.nearItem === it) { G.nearItem = null; renderPrompt(); }
+    if (!mine) return;
     const l = it.loot;
+    if (pickCheck(l) || G.dead) { dropItem(l); return; } // 허락을 기다리는 사이 가득 찼으면 다시 내려놓음
     if (l.kind === 'weapon') {
       const w = W[l.id];
       const secondary = w.family === '권총' || w.family === '근접';
@@ -1008,36 +1204,26 @@
       if (G.cur < 0 || !secondary || G.cur === slot) G.cur = slot;
       renderViewmodel();
     } else if (l.kind === 'ammo') {
-      const a = D.ammo[l.id];
-      if (G.reserve[l.id] >= a.max) { hint(`${a.name}은 최대 ${a.max}발까지 들 수 있어요`); return; }
-      G.reserve[l.id] = Math.min(a.max, G.reserve[l.id] + a.bundle);
+      G.reserve[l.id] = Math.min(D.ammo[l.id].max, G.reserve[l.id] + D.ammo[l.id].bundle);
     } else if (l.kind === 'armor') {
-      if (G[l.slot] >= l.lv) { hint('이미 같거나 더 좋은 장비를 입고 있어요'); return; }
       if (G[l.slot]) dropItem({ kind: 'armor', slot: l.slot, lv: G[l.slot] });
       G[l.slot] = l.lv;
     } else if (l.kind === 'medkit') {
-      if (G.medkits >= 3) { hint('구급상자는 3개까지 들 수 있어요'); return; }
       G.medkits++;
     } else if (l.kind === 'ticket') {
-      if (G.tickets >= MAX_TICKETS) { hint('티켓은 최대 3장까지 들 수 있어요'); return; }
       G.tickets++;
       renderAbilities();
     } else if (l.kind === 'throw') {
-      if (G.throws[l.id] >= throwMax(l.id)) { hint(`${TH[l.id].name}은 ${throwMax(l.id)}개까지 들 수 있어요`); return; }
       G.throws[l.id]++;
       if (!G.throws[G.throwSel]) G.throwSel = l.id;
       renderThrow();
     } else if (l.kind === 'scope') {
-      if (G.scopes.includes(l.lv)) { hint('이미 가진 스코프예요'); return; }
       G.scopes.push(l.lv);
       if (G.cur >= 0) renderViewmodel();
       const fams = D.scopes[l.lv].fam.join('·');
       toast(`${lootName(l)} 획득 — 조준(${K('aim')}) 시 ${l.lv}배 확대 · ${fams}`, 'ok');
     }
     if (l.kind !== 'scope') toast(`${lootName(l)} 획득`);
-    WD.removeItem(it.mesh);
-    G.items = G.items.filter(x => x !== it);
-    G.nearItem = null;
     renderPrompt(); renderWeapons(); renderInv();
   }
   function useMedkit() {

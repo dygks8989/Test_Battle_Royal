@@ -139,3 +139,9 @@
   .nick-field input { width: 110px; }
   .result-title { font-size: 38px; }
 }
+
+/* 온라인 연결 상태 */
+.net-status { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; vertical-align: middle; background: rgba(255,255,255,.08); color: #b9c2cb; }
+.net-status.on { background: rgba(79, 190, 110, .18); color: #7fe39a; }
+.net-status.on::before { content: "● "; }
+.net-status.error { background: rgba(230, 80, 70, .18); color: #ff8a7a; }
