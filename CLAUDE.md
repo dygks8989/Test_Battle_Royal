@@ -23,7 +23,9 @@ python -m http.server 5173 --bind 127.0.0.1
 - 온라인 대전 확인: 같은 주소를 탭 두 개로 열고, 한쪽에서 방 만들기 → 다른 쪽에서 입장 → 둘 다 준비. 닉네임은 localStorage를 공유하므로 각 탭에서 입장 직전에 바꿉니다. 미리보기 창에서는 배경 탭의 렌더 루프가 멈추므로 아래 디버깅 메모의 `requestAnimationFrame` 대체를 두 탭 모두에 적용합니다.
 - 배포: 빌드 없는 정적 사이트라 Vercel에서 이 저장소를 가져오기만 하면 됩니다(Framework Preset: Other, 빌드 명령 없음).
 - 3D는 Three.js **r128**(cdnjs, 전역 `THREE`가 있는 마지막 비모듈 빌드), 온라인은 supabase-js **2.45.4** UMD(jsdelivr, 전역 `supabase`)를 불러옵니다. 인터넷이 막힌 환경에서는 인게임이 뜨지 않고, 온라인 연결만 실패하면 로비에 "연결 안 됨"이 뜨고 혼자 연습만 됩니다.
-- 문법 확인: `node --check js/hud.js` (파일마다).
+- 문법 확인: `for f in js/*.js; do node --check "$f" || echo "FAIL $f"; done`
+- 여러 곳을 한 번에 고치는 파이썬 스크립트는 heredoc 대신 scratchpad에 파일로 저장해 `PYTHONIOENCODING=utf-8 python -I <스크립트> <대상 파일>`로 실행합니다(Windows Git Bash에서 한글+따옴표 heredoc이 깨지고 콘솔이 cp949라 출력도 깨짐).
+- 커밋할 때 나오는 "LF will be replaced by CRLF" 경고는 무시해도 됩니다.
 - CSS/JS를 고친 뒤 브라우저 캐시 때문에 반영이 안 되면 [index.html](index.html)의 `?v=N` 버전을 올립니다.
 
 ## 아키텍처
@@ -72,3 +74,7 @@ ES 모듈 없이 클래식 `<script>`로 로드하고(파일로 직접 열어도
 - 인게임 데모 패널(화면 왼쪽 "데모")로 자기장 ×10, 티켓 추가, 장비 받기(경기관총·저격총·투척물·스코프), 새 능력 받기(누를 때마다 액티브 두 개씩 바뀜), 피격·처치·승리·사망을 바로 재현할 수 있습니다.
 - 미리보기 창이 숨겨져 있으면 `requestAnimationFrame`이 멈춰 렌더·루프가 돌지 않습니다. 이때 카메라 위치 등이 갱신되지 않는 것은 버그가 아닙니다. 숨긴 채로 동작을 확인해야 하면 콘솔에서 `window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16)`로 바꾼 뒤 `LF.go('hud', { session })`로 판을 다시 시작합니다(세션이 없으면 봇 없이 혼자 시작).
 - 준비 단계(10초)에는 사격·능력이 막힙니다. 바로 시험하려면 `LF.hudDebug().zone.t = 99`로 건너뜁니다.
+- 입력 흉내: 키는 `document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }))`(+ `keyup`), 사격은 `#gameCanvas`에 `mousedown` 후 `document`에 `mouseup`(마우스 고정이 없으면 뗄 때 한 발). 연사 간격은 `G.nextShot = 0`으로 건너뜁니다.
+- 명중·스킬 시험은 대상을 고정합니다: 봇은 `setInterval(() => { b.x = X; b.y = Y; b.tx = X; b.ty = Y; }, 2)`, 나는 `WD.setPlayer(x, y, facing)` 후 `setInterval(() => WD.setPos(x, y), 20)`.
+- 미리보기 창 콘솔의 `WrongDocumentError ... pointer lock`은 마우스 고정이 막힌 환경이라 나는 정상 오류입니다.
+- 미리보기 스크린샷은 화면 배율(devicePixelRatio 1.25) 때문에 오른쪽·아래가 잘려 보일 수 있습니다. 레이아웃은 `getBoundingClientRect()`로 확인하고, 화면은 `resize_window`로 크기를 고정한 뒤 `zoom`으로 부분 확인합니다.
