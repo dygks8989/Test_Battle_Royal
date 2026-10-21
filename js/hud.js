@@ -237,7 +237,7 @@
     const zones = assignZones(roster.length);
     const myZone = zones[roster.findIndex(p => p.me)];
     G = {
-      players: roster.map(p => ({ id: p.id, name: p.name, me: !!p.me, alive: true, kills: 0, damage: 0, abilities: [], placement: 0 })),
+      players: roster.map(p => ({ id: p.id, name: p.name, me: !!p.me, bot: !p.me && (!online || !!p.bot), alive: true, kills: 0, damage: 0, abilities: [], placement: 0 })),
       hp: 100, lagHp: 100, helmet: 0, vest: 0,
       weapons: [null, null, null], cur: -1, mags: [0, 0, 0], reserve: { light: 0, rifle: 0, shell: 0, sniper: 0 }, medkits: 0,
       throws: { frag: 0, smoke: 0, flash: 0 }, throwSel: 'frag', nextThrow: 0, scopes: [], zoom: 1,
@@ -247,27 +247,23 @@
       clock: 0, speed: 1, myZone, pos: { x: 0, y: 0 }, facing: 0,
       crouch: false, aiming: false, firing: false, nextShot: 0, moving: false, sprinting: false, jumpReq: false,
       cast: null, lastHit: -99, hist: [], histT: 0, bots: {}, items: [], nearItem: null,
-      botDeaths: [], dead: false, spectate: null, over: false, abilityUses: 0, turret: null, turretNext: 0,
+      dead: false, spectate: null, over: false, abilityUses: 0, turret: null, turretNext: 0,
       timers: [], locked: false, everLocked: false, noLock: false, startT: now(), showHint: true,
-      online, itemSeq: 0, dropSeq: 0, net: { q: [], last: 0, urgent: false }, lastAtk: null, pending: new Set(), rturrets: {}
+      online, itemSeq: 0, dropSeq: 0, net: { q: [], last: 0, urgent: false }, lastAtk: null, pending: new Set(), rturrets: {},
+      botOwner: online ? session.owner : null, noise: []
     };
     roster.forEach((p, i) => {
       const z = zones[i];
       const [x, y] = WD.findFree(z.x + sr(-10, 10), z.y + sr(-10, 10));
       if (p.me) { WD.setPlayer(x, y, Math.atan2(300 - y, 300 - x)); return; }
-      if (online) { // 다른 사람: 위치는 그 사람이 보내는 패킷으로 움직임 (처음 자리는 같은 시드라 미리 앎)
-        G.bots[p.id] = { id: p.id, name: p.name, remote: true, hp: 100, vest: 0, helmet: 0, x, y, h: 0, yaw: 0, tx: x, ty: y, th: 0, tyaw: 0, vx: 0, vy: 0, lastT: now(), moving: false };
-        WD.addBot(p.id, D.palette[p.outfit && p.outfit.top ? p.outfit.top[1] : 0] || pick(D.palette), x, y);
-        return;
-      }
-      G.bots[p.id] = { id: p.id, name: p.name, hp: 100, vest: randInt(0, 1), helmet: randInt(0, 1), x, y, yaw: 0, tx: x, ty: y, nextThink: 0, nextShot: 0, stuck: 0, alertUntil: 0, target: null };
-      WD.addBot(p.id, pick(D.palette), x, y);
+      const color = p.outfit && p.outfit.top ? D.palette[p.outfit.top[1]] : pick(D.palette);
+      // 다른 사람, 그리고 방장이 아닌 쪽에서 본 봇: 위치는 패킷으로 움직임 (처음 자리는 같은 시드라 미리 앎)
+      if (online && (!p.bot || session.owner !== N.myId)) {
+        G.bots[p.id] = { id: p.id, name: p.name, bot: !!p.bot, remote: true, hp: 100, vest: 0, helmet: 0, x, y, h: 0, yaw: 0, tx: x, ty: y, th: 0, tyaw: 0, vx: 0, vy: 0, lastT: now(), moving: false };
+      } else G.bots[p.id] = makeBot(p, x, y); // 혼자 연습의 봇, 온라인에서 방장이 움직이는 봇
+      WD.addBot(p.id, color, x, y);
     });
     placeLoot(zones);
-    // 다른 플레이어끼리의 교전(멀리서 일어남) — 마지막 단계 전에 정리
-    const ids = Object.keys(G.bots).filter(id => !G.bots[id].remote);
-    const times = ids.map(() => rand(60, 480)).sort((a, b) => a - b);
-    G.botDeaths = shuffle(ids).map((id, i) => ({ id, t: times[i] }));
     G.pos = WD.playerMap(); G.facing = WD.facing();
 
     G.mini = buildMap($('#minimapSvg'), false, 'mmask');
@@ -305,7 +301,6 @@
       G.pos = WD.playerMap(); G.facing = WD.facing();
       if (!G.dead) { zoneDamage(dt); regen(dt); recordHist(dt); nearItem(); turretStep(t); chargeStep(t); slamStep(t); }
       botsStep(dt, t);
-      botDeaths();
       netStep(t);
       castStep(t);
       rechargeStep(t);
@@ -390,61 +385,364 @@
     if (store.get('shake')) { const w = $('#world'); w.classList.remove('shake'); void w.offsetWidth; w.classList.add('shake'); }
   }
 
-  /* ================= 봇 AI (배회 → 발견하면 사격) ================= */
+  /* ================= 봇 AI =================
+     보기(시야각·거리·벽·연막) + 듣기(총소리·폭발) + 기억(마지막으로 본 자리·나를 쏜 상대)으로 상황을 읽고 할 일을 고름
+       파밍: 맨손으로 시작해 가까운 건물의 아이템 자리를 돌며 무기·방어구·구급상자·수류탄을 챙김 (맨손일 땐 적을 피함)
+       교전: 무기 계열별 선호 거리 유지, 좌우 무빙, 반응 시간·조준 안정, 연사 끊기, 재장전 땐 물러남, 숨은 적에게 수류탄
+       추적: 놓친 적·들린 총소리 쪽으로 가서 둘러봄 / 도주: 체력이 밀리면 시야를 끊는 엄폐 지점으로 → 안전하면 구급상자
+       자기장: 남은 시간과 거리를 따져 미리 안전구역으로 이동, 밖이면 달려서 들어감 (봇도 자기장 피해를 받음)
+     혼자 연습에서는 내 브라우저가, 온라인에서는 방장 브라우저가 봇을 움직이고 결과(위치·명중·사망)를 다른 사람에게 알림
+     판 도중 무작위는 Math.random — 시드 RNG(sr/sp)를 쓰면 사람마다 맵이 달라짐 */
+  const BOT_POOL = { common: ['p9', 'vx9', 'sg12'], normal: ['r45', 'mk45', 'ar556', 'ak762'], rare: ['dm14', 'br300', 'sv98', 'lm60'] };
+  const BOT_RANK = id => BOT_POOL.rare.includes(id) ? 2 : BOT_POOL.normal.includes(id) ? 1 : 0;
+  const PREF_RANGE = { 권총: 14, 기관단총: 12, 산탄총: 6, 돌격소총: 24, 경기관총: 24, 지정사수소총: 45, 저격총: 55 }; // 교전 선호 거리(m)
+  const BOT_SIGHT = 85, BOT_FOV = Math.cos(75 * Math.PI / 180), BOT_TURN = 7, BOT_AIM = 0.7; // BOT_AIM: 명중률 배수 (높이면 봇이 세짐)
+  const yawTo = (dx, dy) => Math.atan2(-dx, -dy); // 섬 좌표 방향 → 봇 메시 yaw
+  const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+  const ownedBot = id => { const b = G.bots[id]; return b && b.bot && !b.remote && isAlive(id) ? b : null; };
+  const ownsLiveBots = () => Object.values(G.bots).some(b => b.bot && !b.remote && isAlive(b.id));
+
+  function makeBot(p, x, y) {
+    return { id: p.id, name: p.name, bot: true, hp: 100, vest: 0, helmet: 0, x, y, h: 0, yaw: rand(-Math.PI, Math.PI), moving: false,
+      wpn: null, mag: 0, reloadUntil: 0, medkits: Math.random() < 0.3 ? 1 : 0, frags: 0, loots: randInt(2, 4), visited: new Set(),
+      skill: rand(0.85, 1.15), mode: 'loot', goal: null, goalStuck: 0, pauseUntil: 0, healUntil: 0,
+      target: null, lastKnown: null, lastHurt: null, reactAt: 0, aimT: 0, nextThink: rand(0, 0.2), nextShot: 0, burst: 0,
+      strafe: 1, strafeUntil: 0, stuck: 0, detour: 0, detourUntil: 0, nextFrag: 0, nextCover: 0, blindUntil: 0 };
+  }
+  // 총소리·폭발: 반경 r 안의 봇이 듣고 그쪽을 살피러 감
+  function noise(x, y, by, r = 75) { if (!G) return; G.noise.push({ x, y, by, r, t: now() }); if (G.noise.length > 40) G.noise.shift(); }
+  // 봇이 노릴 수 있는 모든 대상 (나·다른 사람·봇·분신) — 섬 좌표, h는 눈높이
+  function actors() {
+    const list = [];
+    if (!G.dead) list.push({ id: me().id, kind: 'me', x: G.pos.x, y: G.pos.y, h: WD.eyePos().y, hp: G.hp, moving: G.moving, crouch: G.crouch });
+    Object.values(G.bots).forEach(o => { if (isAlive(o.id)) list.push({ id: o.id, kind: o.remote ? 'remote' : 'bot', x: o.x, y: o.y, h: (o.h || 0) + 1.55, hp: o.hp, moving: !!o.moving, ref: o }); });
+    WD.clones().forEach(c => list.push({ id: 'clone', kind: 'clone', x: c.x, y: c.y, h: 1.5, hp: 100, moving: false, clone: c.ref }));
+    return list;
+  }
+  // 지금 노리는 대상의 위치를 매 프레임 최신으로
+  function refresh(tg) {
+    if (tg.kind === 'me') { tg.x = G.pos.x; tg.y = G.pos.y; tg.h = WD.eyePos().y; tg.moving = G.moving; tg.crouch = G.crouch; tg.hp = G.hp; }
+    else if (tg.ref) { tg.x = tg.ref.x; tg.y = tg.ref.y; tg.h = (tg.ref.h || 0) + 1.55; tg.moving = !!tg.ref.moving; tg.hp = tg.ref.hp; }
+    return tg;
+  }
+  const zoneTarget = () => { const z = G.zone; return z.state === 'prep' ? null : z.next && z.state !== 'closed' ? z.next : z.cur; };
+  const insideSafe = (x, y, k = 0.85) => { const c = zoneTarget(); return !c || Math.hypot(x - c.x, y - c.y) < c.r * k; };
+  // 다음 안전구역까지 거리 ÷ 달리기 속도가 남은 시간에 가까워지면 미리 움직임
+  function mustRotate(b) {
+    const z = G.zone, c = zoneTarget();
+    if (!c) return false;
+    const d = Math.hypot(b.x - c.x, b.y - c.y) - c.r * 0.75;
+    if (d <= 0) return false;
+    if (z.state === 'shrink' || z.state === 'closed') return true;
+    const left = (z.dur - z.t + D.zonePhases[z.idx].shrink * 0.5) / G.speed;
+    return d / 4.5 > left - 35;
+  }
+
+  /* 보기: 시야각(경계 중이면 넓음)·거리·벽·연막 → 가장 위협적인 대상 하나 */
+  function perceive(b, list, t) {
+    const alert = (b.lastHurt && t - b.lastHurt.t < 6) || b.mode === 'fight' || b.mode === 'search';
+    const fx = -Math.sin(b.yaw), fy = -Math.cos(b.yaw);
+    let best = null, bestS = Infinity;
+    list.forEach(a => {
+      if (a.ref === b) return;
+      const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 0.01;
+      let sight = alert ? BOT_SIGHT * 1.3 : BOT_SIGHT;
+      if (a.crouch && !a.moving) sight *= 0.7; // 가만히 앉아 있으면 잘 안 보임
+      if (d > sight) return;
+      if (d > 8 && (dx * fx + dy * fy) / d < (alert ? -0.2 : BOT_FOV)) return; // 등 뒤는 못 봄 (가까우면 기척으로 앎)
+      if (!WD.los(b.x, 1.6, b.y, a.x, a.h - 0.25, a.y)) return;
+      let sc = d;
+      if (b.lastHurt && b.lastHurt.by === a.id && t - b.lastHurt.t < 8) sc -= 30; // 나를 쏜 상대 먼저
+      if (a.hp < 40) sc -= 12;                                               // 약한 상대 마무리
+      if (b.target && b.target.id === a.id) sc -= 10;                         // 표적을 자주 바꾸지 않음
+      if (a.kind === 'clone') sc += 6;
+      if (sc < bestS) { bestS = sc; best = a; }
+    });
+    if (best) best.d = Math.hypot(best.x - b.x, best.y - b.y);
+    return best;
+  }
+
+  /* 판단 (0.2초마다): 지금 할 일(mode)과 목적지(goal)를 정함 */
+  function botThink(b, list, t) {
+    const z = G.zone, w = b.wpn && W[b.wpn];
+    const seen = t < b.blindUntil ? null : perceive(b, list, t);
+    if (seen) {
+      if (!b.target || b.target.id !== seen.id) { b.reactAt = t + rand(0.35, 0.7) / b.skill; b.aimT = 0; } // 새 표적: 반응 시간
+      b.target = seen; b.lastKnown = { x: seen.x, y: seen.y, t, id: seen.id };
+    } else {
+      b.target = null;
+      const heard = G.noise.filter(n => n.by !== b.id && t - n.t < 1.2 && Math.hypot(n.x - b.x, n.y - b.y) < n.r)
+        .sort((a, c) => Math.hypot(a.x - b.x, a.y - b.y) - Math.hypot(c.x - b.x, c.y - b.y))[0];
+      if (heard && (!b.lastKnown || t - b.lastKnown.t > 1.5)) b.lastKnown = { x: heard.x, y: heard.y, t, id: heard.by, heard: true };
+    }
+    const outside = !isPrep() && Math.hypot(b.x - z.cur.x, b.y - z.cur.y) > z.cur.r - 2;
+    const recent = b.lastKnown && t - b.lastKnown.t < 9;
+    let mode;
+    if (outside) mode = 'zone';
+    else if (!w) mode = seen && seen.d < 22 && seen.kind !== 'clone' ? 'flee' : 'loot';
+    else if (seen && b.hp < 35 && seen.hp > b.hp + 10 && seen.kind !== 'clone') mode = 'flee';
+    else if (seen) mode = 'fight';
+    else if (b.hp < 35 && recent) mode = b.medkits > 0 && t - b.lastKnown.t > 3 ? 'heal' : 'flee'; // 다 죽어 가면 쫓지 않고 숨어서 회복
+    else if (b.hp < 65 && b.medkits > 0 && (!b.lastKnown || t - b.lastKnown.t > 3)) mode = 'heal';
+    else if (mustRotate(b)) mode = 'zone';
+    else if (recent) mode = 'search';
+    else if (b.loots > 0) mode = 'loot';
+    else mode = 'roam';
+    if (mode !== b.mode) {
+      if (mode === 'heal') b.healUntil = t + MEDKIT_CAST;
+      b.mode = mode; b.goal = null; b.goalStuck = 0;
+      if (mode === 'fight' || mode === 'flee' || mode === 'zone') b.pauseUntil = 0;
+    }
+    // 숨은 적(방금까지 보던 자리)에 수류탄
+    if (w && !seen && b.frags > 0 && t >= b.nextFrag && !isPrep() && b.lastKnown && !b.lastKnown.heard && t - b.lastKnown.t < 3) {
+      const d = Math.hypot(b.lastKnown.x - b.x, b.lastKnown.y - b.y);
+      if (d > 7 && d < 24) botFrag(b, b.lastKnown, t);
+    }
+    if (b.goal) return;
+    if (mode === 'zone') {
+      const c = outside && !zoneTarget() ? z.cur : zoneTarget() || z.cur, dx = b.x - c.x, dy = b.y - c.y, d = Math.hypot(dx, dy) || 1;
+      const [x, y] = WD.findFree(c.x + dx / d * c.r * 0.45, c.y + dy / d * c.r * 0.45);
+      b.goal = routeTo(b, x, y);
+    } else if (mode === 'search') b.goal = routeTo(b, b.lastKnown.x, b.lastKnown.y, { search: true });
+    else if (mode === 'loot') {
+      let bi = -1, bd = 150; // 가까운 곳 우선, 안전구역 밖은 멀게 침
+      WD.lootSpots.forEach((sp, i) => {
+        if (b.visited.has(i)) return;
+        const d = Math.hypot(sp.mx - b.x, sp.my - b.y) + (insideSafe(sp.mx, sp.my, 1) ? 0 : 60);
+        if (d < bd) { bd = d; bi = i; }
+      });
+      if (bi < 0) { b.loots = 0; if (!w) b.wpn = pick(BOT_POOL.common), b.mag = W[b.wpn].mag; return; } // 갈 곳이 없으면 대충 무장
+      b.goal = routeTo(b, WD.lootSpots[bi].mx, WD.lootSpots[bi].my, { spot: bi });
+    } else if (mode === 'roam') {
+      const c = zoneTarget() || { x: b.x, y: b.y, r: 120 };
+      const opts = WD.lootSpots.filter(sp => { const d = Math.hypot(sp.mx - b.x, sp.my - b.y); return d > 10 && d < 140 && Math.hypot(sp.mx - c.x, sp.my - c.y) < c.r * 0.85; });
+      if (opts.length) { const sp = pick(opts); b.goal = routeTo(b, sp.mx, sp.my); }
+      else { const a = rand(0, Math.PI * 2), r = rand(0, c.r * 0.6), [x, y] = WD.findFree(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r); b.goal = routeTo(b, x, y); }
+    }
+  }
+
+  // 아이템 자리에 도착: 실제 아이템은 건드리지 않고(사람과 다툼·동기화 문제) 봇 장비만 좋아짐
+  function botLoot(b, spot) {
+    b.visited.add(spot); b.loots--;
+    const sp = WD.lootSpots[spot], central = Math.hypot(sp.mx - 300, sp.my - 300) < 150;
+    if (!b.wpn) b.wpn = pick(Math.random() < 0.6 ? BOT_POOL.common : BOT_POOL.normal);
+    else {
+      const r = Math.random();
+      if (r < 0.3) { const nw = pick(central && Math.random() < 0.45 ? BOT_POOL.rare : BOT_POOL.normal); if (BOT_RANK(nw) > BOT_RANK(b.wpn)) b.wpn = nw; }
+      else if (r < 0.55) { const slot = Math.random() < 0.5 ? 'vest' : 'helmet', lv = Math.random() < 0.7 ? 1 : 2; b[slot] = Math.max(b[slot], lv); }
+      else if (r < 0.75) b.medkits = Math.min(3, b.medkits + 1);
+      else if (r < 0.9) b.frags = Math.min(2, b.frags + 1);
+    }
+    b.mag = W[b.wpn].mag; b.reloadUntil = 0;
+  }
+
+  /* 길 찾기: 건물 안팎을 오갈 때는 가장 가까운 출입구 바깥·안쪽 지점을 거쳐 감 (건물은 축 정렬, 출입구는 벽 가운데) */
+  const DOOR_DIR = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] };
+  const buildingAt = (x, y) => D.buildings.find(B => Math.abs(x - B.x) < B.w / 2 && Math.abs(y - B.y) < B.d / 2);
+  function doorOf(B, x, y) { // [바깥 지점, 안쪽 지점]
+    let best = null, bd = Infinity;
+    B.doors.forEach(sd => {
+      const [nx, ny] = DOOR_DIR[sd], cx = B.x + nx * B.w / 2, cy = B.y + ny * B.d / 2, d = Math.hypot(cx - x, cy - y);
+      if (d < bd) { bd = d; best = [{ x: cx + nx * 1.6, y: cy + ny * 1.6 }, { x: cx - nx * 1.2, y: cy - ny * 1.2 }]; }
+    });
+    return best;
+  }
+  function routeTo(b, x, y, extra) {
+    const via = [], from = buildingAt(b.x, b.y), to = buildingAt(x, y);
+    if (from && from !== to && from.doors.length) { const [o, i] = doorOf(from, x, y); via.push(i, o); }
+    if (to && to !== from && to.doors.length) { const [o, i] = doorOf(to, b.x, b.y); via.push(o, i); }
+    return Object.assign({ x, y, via }, extra);
+  }
+
+  /* 엄폐 지점: 주변 36곳 중 위협에게서 시야가 끊기고, 멀어지고, 가까운 곳 */
+  function findCover(b, th) {
+    let best = null, bs = Infinity;
+    const base = Math.hypot(b.x - th.x, b.y - th.y);
+    for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2;
+      for (const r of [5, 10, 16]) {
+        const x = b.x + Math.cos(a) * r, y = b.y + Math.sin(a) * r;
+        if (!WD.freeAt(x, y, 0.5) || !insideSafe(x, y, 1)) continue;
+        const away = Math.hypot(x - th.x, y - th.y) - base;
+        const sc = r * 0.5 - away * 0.8 - (WD.los(th.x, th.h, th.y, x, 1.2, y) ? 0 : 30);
+        if (sc < bs) { bs = sc; best = { x, y }; }
+      }
+    }
+    return best;
+  }
+
+  /* 이동: 벽에 막히면 잠깐 옆으로 돌아감, 같은 목적지에서 계속 막히면 포기 */
+  function botMove(b, mx, my, speed, dt, t) {
+    const len = Math.hypot(mx, my);
+    if (len < 0.05 || speed <= 0) { b.moving = false; return; }
+    let ux = mx / len, uy = my / len;
+    if (t < b.detourUntil) { const c = Math.cos(b.detour), s2 = Math.sin(b.detour); [ux, uy] = [ux * c - uy * s2, ux * s2 + uy * c]; }
+    const p = { x: b.x - 300, z: b.y - 300 }, step = speed * Math.min(1, len) * dt;
+    WD.moveCircle(p, ux * step, uy * step);
+    const moved = Math.hypot(p.x + 300 - b.x, p.z + 300 - b.y);
+    b.x = p.x + 300; b.y = p.z + 300; b.moving = true;
+    b.stuck = moved < step * 0.35 ? b.stuck + dt : Math.max(0, b.stuck - dt);
+    if (b.stuck > 0.45) {
+      b.stuck = 0; b.strafe *= -1; b.goalStuck++;
+      b.detour = (Math.random() < 0.5 ? 1 : -1) * rand(1.1, 1.8); b.detourUntil = t + rand(0.6, 1.2);
+      if (b.goal && b.goalStuck > 6) { if (b.goal.spot != null) { b.visited.add(b.goal.spot); b.loots--; } b.goal = null; b.goalStuck = 0; }
+    }
+  }
+  function turnTo(b, yaw, dt) { const d = angDiff(yaw, b.yaw); b.yaw += clamp(d, -BOT_TURN * dt, BOT_TURN * dt); return Math.abs(d); }
+
+  /* 행동 (매 프레임): 판단한 mode대로 움직이고 쏨 */
+  function botAct(b, t, dt) {
+    const w = b.wpn && W[b.wpn], tg = b.target && refresh(b.target);
+    if (b.reloadUntil && t >= b.reloadUntil) { b.reloadUntil = 0; b.mag = w.mag; }
+    if (w && !b.reloadUntil && b.mag < w.mag * 0.4 && !tg && b.mode !== 'fight') b.reloadUntil = t + w.reload; // 한가할 때 미리 재장전
+    let mx = 0, my = 0, speed = 0, face = null, shoot = false;
+    const toGoal = (sp) => { // 거쳐 갈 지점(via)이 남았으면 그쪽으로. 반환값은 최종 목적지까지 거리 (거쳐 가는 중이면 무한대)
+      const via = b.goal.via || [];
+      while (via.length && Math.hypot(via[0].x - b.x, via[0].y - b.y) < 0.9) via.shift();
+      const g = via[0] || b.goal, dx = g.x - b.x, dy = g.y - b.y;
+      mx = dx; my = dy; speed = sp; face = yawTo(dx, dy);
+      return via.length ? Infinity : Math.hypot(dx, dy);
+    };
+    if (b.mode === 'heal') {
+      if (t >= b.healUntil) { b.medkits--; b.hp = Math.min(100, b.hp + 75); b.mode = 'roam'; b.goal = null; }
+    } else if (b.mode === 'fight' && tg && w) {
+      const dx = tg.x - b.x, dy = tg.y - b.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+      const pref = PREF_RANGE[w.family] || 20, sniper = w.family === '저격총' || w.family === '지정사수소총';
+      let fwd = 0;
+      if (b.reloadUntil) fwd = d < pref * 1.5 ? -0.8 : 0; // 재장전 중엔 물러남
+      else if (d > pref * 1.5) fwd = 1;
+      else if (d < pref * 0.5) fwd = -0.7;
+      if (t >= b.strafeUntil) { b.strafe = Math.random() < 0.5 ? -1 : 1; b.strafeUntil = t + rand(0.5, 1.4); }
+      const side = sniper && d > 30 && !b.reloadUntil ? 0 : b.strafe * 0.9; // 저격은 멀리서 멈춰 쏨
+      mx = ux * fwd - uy * side; my = uy * fwd + ux * side;
+      speed = fwd > 0.5 ? 4.6 : 3.2;
+      face = yawTo(dx, dy); shoot = true;
+    } else if (b.mode === 'flee' && (tg || b.lastKnown)) {
+      const th = tg || { x: b.lastKnown.x, y: b.lastKnown.y, h: 1.6 }; // 안 보이면 마지막으로 본 자리를 피함
+      if (!b.goal || t >= b.nextCover) {
+        b.nextCover = t + 1.2;
+        const c = findCover(b, th), dx = b.x - th.x, dy = b.y - th.y, d = Math.hypot(dx, dy) || 1;
+        b.goal = c || { x: b.x + dx / d * 12, y: b.y + dy / d * 12 };
+      }
+      if (toGoal(5.2) < 1) speed = 0; // 엄폐 지점에 도착하면 숨어 있음
+      if (w && tg && Math.hypot(tg.x - b.x, tg.y - b.y) < 18) { face = yawTo(tg.x - b.x, tg.y - b.y); shoot = true; } // 가까우면 뒷걸음질하며 응사
+    } else if (b.goal) {
+      const d = toGoal({ zone: 5.2, search: 4.0, loot: 4.6, roam: 3.6 }[b.mode] || 3.6);
+      if (b.mode === 'zone' && tg && w && tg.d < 35) { face = yawTo(tg.x - b.x, tg.y - b.y); shoot = true; } // 달리면서 응사
+      if (t < b.pauseUntil) speed = 0;
+      else if (d < (b.goal.spot != null ? 1.6 : 2.5)) {
+        if (b.goal.spot != null) { botLoot(b, b.goal.spot); b.pauseUntil = t + rand(0.6, 1.4); }
+        else if (b.goal.search) { b.lastKnown = null; b.pauseUntil = t + rand(1.2, 2.2); }
+        else if (b.mode === 'roam') b.pauseUntil = t + rand(2, 6); // 건물에서 잠깐 머물며 둘러봄
+        b.goal = null;
+      }
+    }
+    if (t < b.pauseUntil && !shoot) { speed = 0; face = b.yaw + b.strafe * dt * 1.2; } // 멈춰서 둘러보기
+    else if (!b.goal && !shoot && b.mode !== 'heal') speed = 0;
+    if (face != null) { const err = turnTo(b, face, dt); if (shoot && err < 0.2) b.aimT += dt; }
+    botMove(b, mx, my, speed, dt, t);
+    if (shoot && tg) botShoot(b, tg, w, t, b.moving);
+  }
+
+  /* 사격: 반응 시간·조준 안정·거리·움직임으로 명중 확률, 사람 손 속도에 맞춘 연사 제한 */
+  function botShoot(b, tg, w, t, moving) {
+    if (isPrep() || t < b.reactAt || t < b.nextShot || b.reloadUntil || t < b.blindUntil) return;
+    if (Math.abs(angDiff(yawTo(tg.x - b.x, tg.y - b.y), b.yaw)) > 0.25) return; // 아직 조준 중
+    if (b.mag <= 0) { b.reloadUntil = t + w.reload; return; }
+    const d = Math.hypot(tg.x - b.x, tg.y - b.y), shotgun = w.family === '산탄총';
+    if (shotgun && d > w.range * 2) return; // 너무 멀면 안 쏘고 다가감
+    let gap = Math.max(60 / w.rpm, w.mode === 'semi' ? 0.32 : 0.2);
+    if (w.mode === 'auto' && --b.burst <= 0) { b.burst = randInt(3, 6); gap += rand(0.35, 0.7); } // 몇 발 쏘고 끊음
+    b.nextShot = t + gap * rand(0.9, 1.15);
+    b.mag--;
+    const rel = d / w.range;
+    let acc = shotgun ? (d < 6 ? 0.85 : d < 12 ? 0.55 : 0.25) : rel <= 1 ? 0.48 - 0.15 * rel : 0.33 / rel;
+    acc *= BOT_AIM * b.skill * (0.45 + 0.55 * clamp(b.aimT / 1.2, 0, 1)) * (tg.moving ? 0.72 : 1) * (moving ? 0.8 : 1) * (tg.crouch ? 0.85 : 1);
+    if (w.family === '저격총' || w.family === '지정사수소총') acc *= moving ? 0.5 : 1.1;
+    const hit = Math.random() < clamp(acc, 0.03, 0.9);
+    const part = hit && Math.random() < 0.06 * b.skill ? 'head' : Math.random() < 0.22 ? 'limb' : 'body';
+    const th = tg.h - (part === 'head' ? 0.1 : 0.45);
+    WD.botFire(b.id, tg.x, th, tg.y, hit);
+    netEv({ k: 'shot', id: b.id, b: [r1(tg.x), r1(th), r1(tg.y)], hit: hit ? 1 : 0 });
+    noise(b.x, b.y, b.id);
+    if (!hit) return;
+    const fall = d <= w.range ? 1 : d >= w.range * 2 ? 0.6 : 1 - 0.4 * (d - w.range) / w.range;
+    botDealDamage(b, tg, shotgun ? 11 * (d < 6 ? 7 : d < 12 ? 4 : 2) : w.dmg * fall, part, w.name);
+  }
+  // 봇이 준 피해 → 대상 종류별로 (나: takeShot / 다른 사람: hit 알림 / 봇: 바로 깎음)
+  function botDealDamage(b, tg, base, part, src) {
+    const mult = part === 'head' ? 2 : part === 'limb' ? 0.8 : 1, pl = G.players.find(p => p.id === b.id);
+    if (tg.kind === 'clone') { if (tg.clone.alive) WD.removeClone(tg.clone); return; }
+    if (tg.kind === 'me') {
+      if (G.dead) return;
+      const before = G.hp;
+      G.lastAtk = { id: b.id, src, via: false, t: now() };
+      takeShot(base, part, b.name, { x: b.x, y: b.y });
+      pl.damage += before - G.hp;
+      return;
+    }
+    const o = tg.ref; if (!o || !isAlive(o.id)) return;
+    const dmg = base * mult * (1 - D.armorReduce[part === 'head' ? o.helmet : part === 'body' ? o.vest : 0]);
+    pl.damage += Math.min(dmg, Math.max(0, o.hp));
+    if (tg.kind === 'remote') netEv({ k: 'hit', to: o.id, d: r1(base * mult), hd: part === 'head' ? 1 : 0, src, by: b.id }, true);
+    else botHurt(o, dmg, b.id, src, false, { x: b.x, y: b.y });
+  }
+  // 봇이 맞음 (방어구 적용 뒤 피해) — 쏜 쪽을 기억하고 돌아봄
+  function botHurt(o, dmg, byId, src, via, from) {
+    if (!isAlive(o.id)) return;
+    o.hp -= dmg;
+    o.lastHurt = { by: byId, t: now() };
+    if (from) {
+      o.lastKnown = { x: from.x, y: from.y, t: now(), id: byId };
+      if (!o.target) o.yaw += angDiff(yawTo(from.x - o.x, from.y - o.y), o.yaw) * 0.7;
+    }
+    if (o.hp <= 0) kill(o.id, byId, src, via);
+  }
+  // 봇 수류탄: 1.4초 뒤 그 자리에서 터짐
+  function botFrag(b, at, t) {
+    b.frags--; b.nextFrag = t + 8;
+    const p = { x: at.x + rand(-1.5, 1.5), h: 0.3, y: at.y + rand(-1.5, 1.5) }, R = TH.frag.radius;
+    b.yaw = yawTo(at.x - b.x, at.y - b.y);
+    later(() => {
+      if (!G || G.over) return;
+      WD.explosion(p.x, p.h, p.y, R);
+      fx('exp', { x: r1(p.x), h: r1(p.h), y: r1(p.y), r: R });
+      noise(p.x, p.y, b.id, 90);
+      actors().forEach(a => {
+        if (a.ref === b || a.kind === 'clone') return;
+        const d = Math.hypot(a.x - p.x, a.y - p.y);
+        if (d < R && WD.los(p.x, p.h + 0.4, p.y, a.x, 1.0, a.y)) botDealDamage(b, a, TH.frag.dmg * (1 - 0.75 * d / R), 'body', '수류탄');
+      });
+    }, 1400);
+  }
+  function botZone(b, dt) {
+    const z = G.zone;
+    if (isPrep() || Math.hypot(b.x - z.cur.x, b.y - z.cur.y) <= z.cur.r) return;
+    b.hp -= zoneDps() * dt * G.speed;
+    if (b.hp <= 0) kill(b.id, null, '자기장');
+  }
   function botsStep(dt, t) {
-    const z = G.zone, eye = WD.eyePos();
+    const mine = Object.values(G.bots).filter(b => !b.remote && isAlive(b.id));
+    const list = mine.length ? actors() : null;
+    if (mine.length) G.noise = G.noise.filter(n => t - n.t < 1.5);
     Object.values(G.bots).forEach(b => {
       if (!isAlive(b.id)) return;
       if (b.remote) { remoteStep(b, dt); return; }
-      let moving = false;
-      if (!isPrep()) {
-        if (t < (b.blindUntil || 0)) b.target = null; // 섬광탄에 눈이 멀면 쏘지 못하고 헤맴
-        else if (t >= b.nextThink) {
-          b.nextThink = t + 0.25;
-          const range = t < b.alertUntil ? 90 : 55;
-          const dist = Math.hypot(b.x - G.pos.x, b.y - G.pos.y);
-          const cands = [];
-          if (!G.dead && dist < range) cands.push({ x: G.pos.x, y: G.pos.y, h: eye.y, d: dist });
-          WD.clones().forEach(c => { const d = Math.hypot(c.x - b.x, c.y - b.y); if (d < 40) cands.push({ x: c.x, y: c.y, h: 1.5, d, clone: c.ref }); });
-          cands.sort((a, c) => a.d - c.d);
-          b.target = cands.find(c => WD.los(b.x, 1.6, b.y, c.x, c.h, c.y)) || null;
-        }
-        if (b.target) {
-          b.yaw = Math.atan2(-(b.target.x - b.x), -(b.target.y - b.y));
-          if (t >= b.nextShot) {
-            b.nextShot = t + rand(0.55, 1.2);
-            const d = b.target.d, tg = b.target;
-            if (tg.clone) {
-              const hit = tg.clone.alive && Math.random() < 0.5;
-              WD.botFire(b.id, tg.x, 1.3, tg.y, hit);
-              if (hit) WD.removeClone(tg.clone);
-            } else {
-              const chance = 0.2 * (d < 15 ? 1.3 : d < 35 ? 1 : 0.65) * (G.moving ? 0.7 : 1) * (G.crouch ? 0.8 : 1);
-              const hit = Math.random() < chance;
-              WD.botFire(b.id, G.pos.x, eye.y - 0.35, G.pos.y, hit); // 빗나간 총알도 내 주변으로 날아오는 게 보임
-              if (hit) takeShot(randInt(18, 26), Math.random() < 0.12 ? 'head' : Math.random() < 0.25 ? 'limb' : 'body', b.name, { x: b.x, y: b.y });
-            }
-          }
-        } else {
-          // 다음 안전구역 쪽으로 배회
-          if (Math.hypot(b.tx - b.x, b.ty - b.y) < 1.5 || b.stuck > 1.2) {
-            const c = z.next || z.cur, a = rand(0, Math.PI * 2), d = rand(0, Math.max(10, c.r * 0.6));
-            b.tx = c.x + Math.cos(a) * d; b.ty = c.y + Math.sin(a) * d; b.stuck = 0;
-          }
-          const dx = b.tx - b.x, dy = b.ty - b.y, len = Math.hypot(dx, dy) || 1;
-          const p = { x: b.x - 300, z: b.y - 300 };
-          WD.moveCircle(p, dx / len * 3.4 * dt, dy / len * 3.4 * dt);
-          const moved = Math.hypot(p.x + 300 - b.x, p.z + 300 - b.y);
-          b.stuck = moved < 3.4 * dt * 0.3 ? b.stuck + dt : 0;
-          b.x = p.x + 300; b.y = p.z + 300;
-          b.yaw = Math.atan2(-dx, -dy);
-          moving = true;
-        }
-      }
-      WD.poseBot(b.id, b.x, b.y, b.yaw, moving);
+      if (t >= b.nextThink) { b.nextThink = t + 0.2; botThink(b, list, t); }
+      botAct(b, t, dt);
+      botZone(b, dt);
+      if (isAlive(b.id)) WD.poseBot(b.id, b.x, b.y, b.yaw, b.moving);
     });
   }
-  // 다른 플레이어: 마지막 패킷 위치 + 속도로 조금 앞을 예측하고 부드럽게 따라감
+  // 섬광: 반경 안에서 섬광을 본 봇은 잠깐 눈이 멂 (내가 움직이는 봇만 — 다른 사람이 던진 섬광에도)
+  function blindBots(p) {
+    const t = TH.flash;
+    Object.values(G.bots).forEach(b => {
+      const d = Math.hypot(b.x - p.x, b.y - p.y);
+      if (!b.remote && isAlive(b.id) && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, b.x, 1.6, b.y)) { b.blindUntil = now() + t.blind * (1 - 0.5 * d / t.radius); b.target = null; }
+    });
+  }
+  // 다른 플레이어(와 방장이 움직이는 봇): 마지막 패킷 위치 + 속도로 조금 앞을 예측하고 부드럽게 따라감
   function remoteStep(b, dt) {
     const ahead = Math.min(0.3, now() - b.lastT), k = Math.min(1, dt * 12);
     const tx = b.tx + b.vx * ahead, ty = b.ty + b.vy * ahead;
@@ -467,14 +765,12 @@
       if (!viaAbility && has('vampire') && G.hp < 100) { G.hp = Math.min(100, G.hp + dmg * 0.15); proc('vampire', `+${Math.round(dmg * 0.15)} 회복`); }
       return;
     }
-    b.hp -= dmg;
-    b.alertUntil = now() + 4;
     const hm = $('#hitmarker');
     hm.className = 'hitmarker'; void hm.offsetWidth; hm.className = 'hitmarker show' + (head ? ' head' : '');
-    dmgNumber(pt || { x: b.x, h: 1.9, y: b.y }, dmg, head, b.hp <= 0);
+    dmgNumber(pt || { x: b.x, h: 1.9, y: b.y }, dmg, head, b.hp - dmg <= 0);
     me().damage += dmg;
     if (!viaAbility && has('vampire') && G.hp < 100) { G.hp = Math.min(100, G.hp + dmg * 0.15); proc('vampire', `+${Math.round(dmg * 0.15)} 회복`); }
-    if (b.hp <= 0) kill(id, me().id, source, viaAbility);
+    botHurt(b, dmg, me().id, source, viaAbility, G.dead ? null : G.pos);
   }
   function dmgNumber(pt, dmg, head, lethal) {
     const p = WD.project(pt.x, pt.h, pt.y);
@@ -530,6 +826,7 @@
     const cone = shotgun ? (G.aiming ? 3.6 : 4.5) : spreadDeg(w);
     const tracer = w.mode === 'melee' ? null : TRACER[w.family] || { color: '#ffe08a', width: 0.03 };
     if (w.family === '저격총') WD.fovKick(0.03);
+    noise(G.pos.x, G.pos.y, me().id, w.mode === 'melee' ? 8 : 75);
     for (let i = 0; i < pellets; i++) {
       const hit = WD.shoot(cone * Math.PI / 180, w.mode === 'melee' ? w.range : 600, tracer);
       if (i === 0 && tracer && hit) netEv({ k: 'shot', b: [r1(hit.point.x + 300), r1(hit.point.y), r1(hit.point.z + 300)] });
@@ -595,15 +892,12 @@
   function detonate(kind, p) {
     if (!G || G.over) return;
     const t = TH[kind];
-    if (kind === 'frag') { WD.explosion(p.x, p.h, p.y, t.radius); fx('exp', { x: r1(p.x), h: r1(p.h), y: r1(p.y), r: t.radius }); blast(p, t.radius, t.dmg, '수류탄', false, true); }
+    if (kind === 'frag') { WD.explosion(p.x, p.h, p.y, t.radius); fx('exp', { x: r1(p.x), h: r1(p.h), y: r1(p.y), r: t.radius }); noise(p.x, p.y, me().id, 90); blast(p, t.radius, t.dmg, '수류탄', false, true); }
     else if (kind === 'smoke') { WD.addSmoke(p.x, p.y, t.radius, t.dur); fx('smoke', { x: r1(p.x), y: r1(p.y), r: t.radius, d: t.dur }); }
     else if (kind === 'flash') {
       WD.flashBurst(p.x, p.h, p.y);
       fx('flash', { x: r1(p.x), h: r1(p.h), y: r1(p.y) });
-      Object.values(G.bots).forEach(b => {
-        const d = Math.hypot(b.x - p.x, b.y - p.y);
-        if (isAlive(b.id) && d < t.radius && WD.los(p.x, p.h + 0.3, p.y, b.x, 1.6, b.y)) { b.blindUntil = now() + t.blind * (1 - 0.5 * d / t.radius); b.target = null; }
-      });
+      blindBots(p);
       flashMe(p);
     }
   }
@@ -955,7 +1249,8 @@
     if (!G.online) return;
     const n = G.net, gap = t - n.last;
     if (gap < LF.config.tickMs / 1000 && !(n.urgent && gap >= 0.12)) return;
-    if (G.dead && !n.q.length && gap < 1) return; // 죽은 뒤에는 알릴 일이 있을 때만
+    const bots = Object.values(G.bots).filter(b => b.bot && !b.remote && isAlive(b.id)); // 내가(방장) 움직이는 봇
+    if (G.dead && !n.q.length && gap < 1 && !bots.length) return; // 죽은 뒤에는 알릴 일이 있을 때만 (봇이 남았으면 계속)
     n.last = t; n.urgent = false;
     const e = WD.eyePos(), m = me();
     const pkt = { s: G.dead ? null : {
@@ -963,30 +1258,57 @@
       yaw: Math.round(WD.yaw * 100) / 100, m: G.moving ? 1 : 0, hp: Math.ceil(G.hp), hv: G.helmet, vs: G.vest,
       dmg: Math.round(m.damage), ab: G.everOwned
     } };
+    if (bots.length) pkt.b = bots.map(b => [b.id, Math.round(b.x * 100) / 100, Math.round(b.y * 100) / 100, Math.round(b.yaw * 100) / 100, b.moving ? 1 : 0, Math.ceil(b.hp), b.helmet, b.vest, Math.round(G.players.find(p => p.id === b.id).damage)]);
     if (n.q.length) { pkt.e = n.q; n.q = []; }
     N.roomSend('g', pkt);
   }
+  function applyState(b, s, t) {
+    const dt = Math.max(0.05, t - b.lastT);
+    const jump = Math.hypot(s.x - b.tx, s.y - b.ty);
+    b.vx = jump > 6 ? 0 : (s.x - b.tx) / dt; b.vy = jump > 6 ? 0 : (s.y - b.ty) / dt;
+    if (jump > 6 || Math.hypot(s.x - b.x, s.y - b.y) > 12) { b.x = s.x; b.y = s.y; } // 순간이동·되감기는 바로 옮김
+    b.tx = s.x; b.ty = s.y; b.th = s.h; b.tyaw = s.yaw; b.moving = !!s.m; b.lastT = t;
+    b.hp = s.hp; b.helmet = s.hv; b.vest = s.vs;
+  }
   function onPacket(m) {
-    if (!G || !G.online || !G.bots[m.f]) return;
+    if (!G || !G.online || G.over || !G.bots[m.f]) return;
     const b = G.bots[m.f], t = now(), p = G.players.find(x => x.id === m.f);
     if (m.s) {
-      const s = m.s, dt = Math.max(0.05, t - b.lastT);
-      const jump = Math.hypot(s.x - b.tx, s.y - b.ty);
-      b.vx = jump > 6 ? 0 : (s.x - b.tx) / dt; b.vy = jump > 6 ? 0 : (s.y - b.ty) / dt;
-      if (jump > 6 || Math.hypot(s.x - b.x, s.y - b.y) > 12) { b.x = s.x; b.y = s.y; } // 순간이동·되감기는 바로 옮김
-      b.tx = s.x; b.ty = s.y; b.th = s.h; b.tyaw = s.yaw; b.moving = !!s.m; b.lastT = t;
-      b.hp = s.hp; b.helmet = s.hv; b.vest = s.vs;
-      if (p) { p.damage = s.dmg; p.abilities = s.ab || []; }
+      applyState(b, m.s, t);
+      if (p) { p.damage = m.s.dmg; p.abilities = m.s.ab || []; }
     }
+    // 방장이 움직이는 봇: [id, x, y, yaw, 이동, 체력, 헬멧, 조끼, 누적 피해]
+    (m.b || []).forEach(a => {
+      const rb = G.bots[a[0]];
+      if (!rb || !rb.remote || !isAlive(a[0])) return;
+      applyState(rb, { x: a[1], y: a[2], h: 0, yaw: a[3], m: a[4], hp: a[5], hv: a[6], vs: a[7] }, t);
+      const bp = G.players.find(x => x.id === a[0]); if (bp) bp.damage = a[8];
+    });
     (m.e || []).forEach(e => { try { onEvent(e, m.f, b, p); } catch (err) { console.error(err); } });
   }
   function onEvent(e, from, b, p) {
     const mine = e.to === N.myId;
     switch (e.k) {
-      case 'hit': if (mine) onHit(e, from); break;
-      case 'push': if (mine && !G.dead) WD.push(e.dx, e.dy); break;
-      case 'death': kill(from, e.by, e.src, !!e.via); break;
-      case 'shot': if (isAlive(from)) WD.botFire(from, e.b[0], e.b[1], e.b[2], true); break;
+      case 'hit': { // 나에게 또는 내가 움직이는 봇에게
+        if (mine) { onHit(e, from); break; }
+        const tb = ownedBot(e.to), a = G.bots[from];
+        if (tb) botHurt(tb, e.d * (1 - D.armorReduce[e.hd ? tb.helmet : tb.vest]), from, e.src, !!e.via, a ? { x: a.x, y: a.y } : null);
+        break;
+      }
+      case 'push': {
+        if (mine) { if (!G.dead) WD.push(e.dx, e.dy); break; }
+        const tb = ownedBot(e.to);
+        if (tb) { const q = { x: tb.x - 300, z: tb.y - 300 }; WD.moveCircle(q, e.dx, e.dy); tb.x = q.x + 300; tb.y = q.z + 300; }
+        break;
+      }
+      case 'death': kill(e.id || from, e.by, e.src, !!e.via); break; // id: 방장이 알리는 봇의 사망
+      case 'shot': { // id: 방장이 알리는 봇의 사격
+        const sid = e.id || from, sb = G.bots[sid];
+        if (!isAlive(sid)) break;
+        WD.botFire(sid, e.b[0], e.b[1], e.b[2], e.hit == null ? true : !!e.hit);
+        if (sb) noise(sb.x, sb.y, sid);
+        break;
+      }
       case 'fx': applyFx(e, from); break;
       case 'drop': putItem(e.loot, e.x, e.y, e.iid); break;
       case 'pick': { const it = G.items.find(x => x.iid === e.iid); G.pending.delete(e.iid); if (it) takeItem(it, e.by === N.myId); break; }
@@ -1006,16 +1328,16 @@
   }
   function onHit(e, from) {
     if (G.dead || G.over) return;
-    const att = G.bots[from];
-    G.lastAtk = { id: from, src: e.src, via: !!e.via, t: now() };
+    const by = e.by || from, att = G.bots[by]; // by: 봇이 쏜 경우 그 봇 (방장이 대신 보냄)
+    G.lastAtk = { id: by, src: e.src, via: !!e.via, t: now() };
     takeShot(e.d, e.hd ? 'head' : 'body', att ? att.name : '적', att ? { x: att.x, y: att.y } : null, true);
   }
   function applyFx(e, from) {
     const at = { x: e.x, y: e.y, yaw: e.yaw };
     switch (e.fx) {
-      case 'exp': WD.explosion(e.x, e.h, e.y, e.r); break;
+      case 'exp': WD.explosion(e.x, e.h, e.y, e.r); noise(e.x, e.y, from, 90); break;
       case 'smoke': WD.addSmoke(e.x, e.y, e.r, e.d); break;
-      case 'flash': WD.flashBurst(e.x, e.h, e.y); if (!G.dead) flashMe({ x: e.x, h: e.h, y: e.y }); break;
+      case 'flash': WD.flashBurst(e.x, e.h, e.y); blindBots({ x: e.x, h: e.h, y: e.y }); if (!G.dead) flashMe({ x: e.x, h: e.h, y: e.y }); break;
       case 'trail': WD.trail(e.a, e.c, e.b); break;
       case 'burst': WD.burstAtPlayer(e.c, e.r, at); break;
       case 'slam': WD.slamImpact(e.r, '#ffb347', at); break;
@@ -1034,8 +1356,12 @@
     }
   }
   N.on('msg:g', onPacket);
-  // 매치 중에 나간 사람은 그 자리에서 탈락 처리
-  N.on('left', id => { if (G && G.online && !G.over && G.bots[id] && isAlive(id)) kill(id, null, '연결 끊김'); });
+  // 매치 중에 나간 사람은 그 자리에서 탈락 처리 (방장이 나가면 방장이 움직이던 봇도)
+  N.on('left', id => {
+    if (!G || !G.online || G.over) return;
+    if (G.bots[id] && isAlive(id)) kill(id, null, '연결 끊김');
+    if (id === G.botOwner) Object.values(G.bots).forEach(b => { if (b.bot && b.remote && isAlive(b.id)) kill(b.id, null, '연결 끊김'); });
+  });
 
   /* ================= 처치·사망 ================= */
   function kill(victimId, killerId, source, viaAbility) {
@@ -1046,11 +1372,13 @@
     const k = G.players.find(p => p.id === killerId);
     if (k) k.kills++;
     feed(k ? k.name : '자기장', v.name, source, viaAbility, k && k.me, v.me);
-    G.botDeaths = G.botDeaths.filter(d => d.id !== victimId);
     const b = G.bots[victimId];
     if (b) {
       WD.killBot(victimId);
-      if (!b.remote && Math.random() < 0.5) { const [x, y] = WD.findFree(b.x + 0.8, b.y, 0.4); putItem({ kind: 'ticket' }, x, y); } // 쓰지 않은 티켓이 떨어짐
+      if (b.bot && !b.remote) { // 내가 움직이던 봇: 사망을 알리고, 쓰지 않은 티켓을 떨어뜨림
+        netEv({ k: 'death', id: victimId, by: killerId || null, src: source, via: viaAbility ? 1 : 0 }, true);
+        if (Math.random() < 0.5) dropAt({ kind: 'ticket' }, b.x + 0.8, b.y);
+      }
     }
     if (k && k.me) {
       if (G.tickets < MAX_TICKETS) { G.tickets++; toast('처치 보상: 랜덤 능력 티켓 +1', 'ok'); }
@@ -1077,18 +1405,6 @@
     setTimeout(() => el.classList.add('out'), 6000);
     setTimeout(() => el.remove(), 6500);
   }
-  function botDeaths() {
-    if (isPrep()) return;
-    G.botDeaths.filter(d => G.clock >= d.t).forEach(d => {
-      const b = G.bots[d.id];
-      if (b && !G.dead && Math.hypot(b.x - G.pos.x, b.y - G.pos.y) < 70) { d.t = G.clock + 15; return; } // 내 근처면 미룸
-      const others = alive().filter(p => p.id !== d.id && !p.me);
-      const byZone = G.zone.idx >= 1 && Math.random() < 0.3;
-      const killer = !byZone && others.length ? pick(others) : null;
-      if (killer) killer.damage += rand(100, 180);
-      kill(d.id, killer && killer.id, killer ? pick(['AR-556', 'VX-9', 'AK-762', 'SG-12 펌프', 'DM-14', 'MK-45']) : '자기장');
-    });
-  }
   function die(source) {
     G.dead = true; G.firing = false; G.aiming = false; G.cast = null;
     const m = me();
@@ -1110,9 +1426,10 @@
     const d = $('#deathOverlay');
     d.innerHTML = `<div class="death-box"><p class="death-rank">#${m.placement} / ${G.players.length}</p><h2>${source === '자기장' ? '자기장에 쓰러졌어요' : source === '내 수류탄' ? '내 수류탄에 쓰러졌어요' : `${esc(source)} 님에게 처치당했어요`}</h2>
       <p class="muted">처치 ${m.kills} · 데미지 ${Math.round(m.damage)}</p>
+      ${G.online && ownsLiveBots() ? '<p class="muted"><small>내 브라우저가 봇을 움직이고 있어요. 판이 끝나기 전에 나가면 남은 봇이 모두 탈락해요.</small></p>' : ''}
       <div class="death-actions"><button class="btn btn-lg" id="spectateBtn">관전하기</button><button class="btn btn-lg btn-primary" id="toResult">결과 보기</button></div></div>`;
     d.hidden = false;
-    $('#spectateBtn').onclick = () => { d.hidden = true; G.spectate = (alive()[0] || {}).id; WD.setMode('spectate', G.spectate); if (!G.online) G.speed = 10; checkEnd(); };
+    $('#spectateBtn').onclick = () => { d.hidden = true; G.spectate = (alive()[0] || {}).id; WD.setMode('spectate', G.spectate); if (!G.online) G.speed = 3; checkEnd(); };
     $('#toResult').onclick = () => finish(false);
     checkEnd();
   }
@@ -1156,8 +1473,9 @@
     p.innerHTML = `<kbd>${esc(K('interact'))}</kbd> 줍기 <b>${esc(lootName(G.nearItem.loot))}</b>`;
     p.classList.add('show');
   }
-  function dropItem(loot) {
-    const [x, y] = WD.findFree(G.pos.x + rand(-0.8, 0.8), G.pos.y + rand(-0.8, 0.8), 0.4);
+  function dropItem(loot) { dropAt(loot, G.pos.x + rand(-0.8, 0.8), G.pos.y + rand(-0.8, 0.8)); }
+  function dropAt(loot, mx, my) {
+    const [x, y] = WD.findFree(mx, my, 0.4);
     const iid = G.online ? `${N.myId}-${G.dropSeq++}` : null;
     putItem(loot, x, y, iid);
     if (G.online) netEv({ k: 'drop', iid, loot, x: r1(x), y: r1(y) }, true);
@@ -1538,6 +1856,15 @@
 
   LF.registerScreen('hud', {
     enter(params) { held.clear(); start(params.session); },
-    leave() { cancelAnimationFrame(raf); if (G) { G.over = true; G.timers.forEach(clearTimeout); } held.clear(); unlock(true); hudEl.classList.remove('scoped'); }
+    leave() {
+      cancelAnimationFrame(raf);
+      if (G) {
+        // 방장이 판 도중에 나가면 봇을 더 움직일 사람이 없으므로 남은 봇을 탈락시킴 (판이 끝났으면 그대로)
+        const bots = G.online && alive().length > 1 ? Object.values(G.bots).filter(b => b.bot && !b.remote && isAlive(b.id)) : [];
+        if (bots.length) N.roomSend('g', { s: null, e: bots.map(b => ({ k: 'death', id: b.id, by: null, src: '연결 끊김' })) });
+        G.over = true; G.timers.forEach(clearTimeout);
+      }
+      held.clear(); unlock(true); hudEl.classList.remove('scoped');
+    }
   });
 })();

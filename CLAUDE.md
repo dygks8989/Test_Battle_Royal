@@ -46,6 +46,9 @@ ES 모듈 없이 클래식 `<script>`로 로드하고(파일로 직접 열어도
   - presence를 다시 track하면 leave+join이 함께 오므로 `left`는 1.5초 뒤에도 없을 때만 냅니다. 방장 부재 판정(room.js)도 2초 유예가 있습니다.
 - 방 흐름: 방장 브라우저가 카운트다운(`cd`/`cdx`)과 시작 신호 `start {seed, roster}`를 냅니다. 모두 같은 `seed`로 `hud.js`의 `RNG`(`sr`/`sp`/`sshuffle`)를 돌려 스폰 구역·아이템·자기장을 똑같이 만듭니다. **시드 RNG 호출 순서가 바뀌면 사람마다 맵이 달라지니**, 판 도중 무작위(퍼짐·드롭 위치 등)는 `Math.random`/`rand`를 쓰고 `sr`/`sp`는 판 준비와 `enterWait`에만 씁니다.
 - 인게임: 다른 사람은 `G.bots[id]`에 `remote: true`로 들어가 봇과 같은 메시·판정 경로를 씁니다. 각자 `netStep`에서 자기 상태 + 쌓인 이벤트를 패킷 `g`로 보내고(무료 플랜 초당 100메시지 한도 때문에 약 4.5Hz), `onPacket`/`onEvent`가 받습니다. 명중은 쏜 쪽이 판정해 `hit`(부위 배율 포함, 방어구 전)를 보내고 맞은 쪽이 방어구를 적용합니다. 사망은 본인이 `death`를 알립니다. 아이템 줍기는 접속 중인 참가자 중 아이디가 가장 앞선 사람(`arbiter`)이 `pick`으로 허락합니다. 능력·투척 연출은 `fx(kind, data)` → `applyFx`.
+- **봇(빈자리 채우기)**: 방장이 대기실 빈 슬롯을 누르면 봇이 들어갑니다. 봇 목록은 방장 presence의 `bots`(`{id, name, outfit}`)에 있고, 모두가 "사람 먼저, 남는 자리만 봇" 규칙으로 슬롯을 계산합니다(사람이 들어오면 뒤쪽 봇이 자리를 내주고, 나가면 돌아옴). 사람이 막 들어온 순간 방장이 presence를 다시 track하면 들어온 쪽에 '방장 나감'이 먼저 도착해 튕기므로, 입장에 반응해 방장 presence를 고치지 않습니다. 봇은 늘 준비 상태라 시작 조건의 준비 인원은 사람만 셉니다.
+  - 판에서는 `start {seed, roster, owner}`의 `owner`(방장) 브라우저만 봇 AI를 돌립니다(`G.bots[id]`에 `remote` 없이). 다른 사람에게 봇은 `remote: true, bot: true`이고, 방장 패킷 `g`의 `b` 배열(`[id, x, y, yaw, 이동, 체력, 헬멧, 조끼, 누적 피해]`)로 움직입니다. 봇의 사격·사망은 방장이 `shot`/`death` 이벤트에 `id`(봇 아이디)를 붙여 대신 알리고, 봇이 사람을 맞히면 `hit`에 `by`(봇 아이디)를 붙입니다. 사람이 봇을 맞힌 `hit`은 방장이 받아 `botHurt`로 처리합니다.
+  - 방장이 판 도중에 나가면(화면 이탈·연결 끊김) 남은 봇은 '연결 끊김'으로 탈락합니다.
 - 새 능력·투척물을 만들면 상대 화면에도 보이도록 `fx(...)` 호출과 `applyFx`의 case를 함께 추가합니다. 상대에게 주는 피해·넉백은 `damageBot`/`knock`이 알아서 네트워크로 보냅니다.
 
 ### 데이터와 설정
@@ -56,6 +59,7 @@ ES 모듈 없이 클래식 `<script>`로 로드하고(파일로 직접 열어도
 ### 인게임: world3d.js ↔ hud.js
 - [js/world3d.js](js/world3d.js) (`LF.world3d`): Three.js 씬, 지형, `data.buildings`로 건물(벽 구간 분할로 출입구·창문 생성, 칸막이, flat/gable/arch 지붕), 나무(InstancedMesh), 충돌(원 vs 회전 박스, `pushOut`), 플레이어 이동·점프·카메라, 레이캐스트 사격(`shoot`, 총알 궤적 포함), 시야(`los`, 연막이 가림), 봇·아이템·능력 오브젝트 메시, 투척물 물리(`throwObj`), 효과(`addFx` 기반 궤적·폭발·연막·번개·유성·화면 흔들림). **게임 규칙은 모릅니다.** 효과는 PointLight 대신 가산 혼합 메시로 빛을 흉내 냅니다(라이트를 추가하면 모든 재질이 다시 컴파일돼 끊김).
 - [js/hud.js](js/hud.js): 매치 상태 `G`와 규칙 전부 — 자기장, 스폰 배정(서로 150m 이상), 아이템 배치, 무기·재장전·스코프·투척물, 티켓 뽑기·교체 창, 능력 효과, 봇 AI, 처치·사망·관전, HUD 렌더링, 입력, Pointer Lock.
+  - 봇 AI: 0.2초마다 `botThink`(보기 `perceive` + 듣기 `noise` + 기억 `lastKnown`/`lastHurt` → `mode`: loot·fight·search·flee·heal·zone·roam), 매 프레임 `botAct`(이동·조준·`botShoot`). 봇은 맨손으로 시작해 `lootSpots`를 돌며 장비가 좋아지지만 실제 아이템은 건드리지 않습니다. 건물 안팎은 `routeTo`가 출입구를 거쳐 갑니다. 봇끼리도 실제로 싸우고 자기장 피해를 받습니다. 세기는 `BOT_AIM`(명중률 배수)·반응 시간·`PREF_RANGE`(계열별 교전 거리)로 조절합니다. 판 도중 무작위라 `Math.random`만 씁니다.
 - **좌표계**: 기획·미니맵·`G`는 섬 좌표(0~600m, y가 남쪽), Three.js는 월드 좌표 `x = mx − 300`, `z = my − 300`. world3d의 공개 함수는 섬 좌표를 받고 돌려줍니다. 방향은 섬 좌표 각도(`facing`)와 카메라 `yaw`(`yaw = −facing − π/2`)를 구분합니다.
 - 맵(건물·나무·상자 배치)은 고정 시드 RNG라 매 판 같고, 스폰·아이템·봇·자기장 중심만 판마다 무작위입니다. 아이템 자리는 건물 생성 때 `lootSpots`로 만들어집니다.
 - 미니맵·큰 지도(SVG)는 `world3d.islandPath()`와 `data.buildings`/`forests`/`runway`를 그대로 그리므로 3D와 자동으로 일치합니다. 맵을 바꿀 때는 data.js만 고치면 됩니다.
@@ -76,6 +80,7 @@ ES 모듈 없이 클래식 `<script>`로 로드하고(파일로 직접 열어도
 - 미리보기 창이 숨겨져 있으면 `requestAnimationFrame`이 멈춰 렌더·루프가 돌지 않습니다. 이때 카메라 위치 등이 갱신되지 않는 것은 버그가 아닙니다. 숨긴 채로 동작을 확인해야 하면 콘솔에서 `window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16)`로 바꾼 뒤 `LF.go('hud', { session })`로 판을 다시 시작합니다(세션이 없으면 봇 없이 혼자 시작).
 - 준비 단계(10초)에는 사격·능력이 막힙니다. 바로 시험하려면 `LF.hudDebug().zone.t = 99`로 건너뜁니다.
 - 입력 흉내: 키는 `document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }))`(+ `keyup`), 사격은 `#gameCanvas`에 `mousedown` 후 `document`에 `mouseup`(마우스 고정이 없으면 뗄 때 한 발). 연사 간격은 `G.nextShot = 0`으로 건너뜁니다.
+- 봇 교전 시험: 봇에게 무기를 쥐여 주고 원하는 자리에 둡니다 — `Object.assign(b, { x, y, wpn: 'ar556', mag: 30, loots: 0, mode: 'roam', goal: null })`. 나를 무적으로 두려면 `G.hp = 1e9`. 혼자 연습에서 죽은 뒤 관전은 자기장 3배속입니다(10배속이면 봇이 자기장을 못 따라감).
 - 명중·스킬 시험은 대상을 고정합니다: 봇은 `setInterval(() => { b.x = X; b.y = Y; b.tx = X; b.ty = Y; }, 2)`, 나는 `WD.setPlayer(x, y, facing)` 후 `setInterval(() => WD.setPos(x, y), 20)`.
 - 미리보기 창 콘솔의 `WrongDocumentError ... pointer lock`은 마우스 고정이 막힌 환경이라 나는 정상 오류입니다.
 - 미리보기 스크린샷은 화면 배율(devicePixelRatio 1.25) 때문에 오른쪽·아래가 잘려 보일 수 있습니다. 레이아웃은 `getBoundingClientRect()`로 확인하고, 화면은 `resize_window`로 크기를 고정한 뒤 `zoom`으로 부분 확인합니다.
